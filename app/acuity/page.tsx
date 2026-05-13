@@ -54,7 +54,9 @@ function normalizeQueryValue(value: string | string[] | undefined): string | und
 }
 
 function getValidDateOrFallback(value: string | undefined, fallback: string): string {
-  return isValidDateInput(value) ? value : fallback;
+  if (!value) return fallback;
+  if (isValidDateInput(value)) return value;
+  return fallback;
 }
 
 function getDateRange(searchParams: SearchParams) {
