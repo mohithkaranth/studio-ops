@@ -13,7 +13,16 @@ type AcuityAppointment = {
   phone?: string
   date?: string
   datetime?: string
-  timezone?: string
+  appointmentTypeID?: number | string
+  type?: string
+  calendarID?: number | string
+  calendar?: string
+  created?: string
+  canceled?: boolean | string | number
+  canceledDateTime?: string
+  price?: string | number
+  paid?: string
+  certificate?: string
   [key: string]: unknown
 }
 
@@ -68,49 +77,91 @@ function eachUtcDay(from: Date, to: Date): string[] {
   return days
 }
 
-async function getTableColumns(tableName: string): Promise<Set<string>> {
-  const rows = await sql<{ column_name: string }[]>`
-    select column_name
-    from information_schema.columns
-    where table_schema = 'public' and table_name = ${tableName}
-  `
-
-  return new Set(rows.map((row) => row.column_name))
+function asString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : null
 }
 
-async function createSyncRun(fromDate: string, toDate: string): Promise<number | null> {
-  const columns = await getTableColumns('acuity_sync_runs')
-  if (!columns.size) {
-    return null
+function asInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function asBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) return false
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
+    return true
+  }
+  return false
+}
+
+function inferPackage(appointment: AcuityAppointment): { inferred: string | null; reason: string } {
+  const typeName = asString(appointment.type)
+  if (!typeName) {
+    return { inferred: null, reason: 'No appointment type name provided.' }
   }
 
-  const payload: Record<string, unknown> = {}
-
-  if (columns.has('status')) payload.status = 'running'
-  if (columns.has('started_at')) payload.started_at = new Date().toISOString()
-  if (columns.has('from_date')) payload.from_date = fromDate
-  if (columns.has('to_date')) payload.to_date = toDate
-
-  if (!Object.keys(payload).length) {
-    return null
+  return {
+    inferred: typeName,
+    reason: 'Derived from appointment type name.',
   }
+}
 
-  const [row] = await sql<{ id?: number }[]>`
-    insert into acuity_sync_runs ${sql(payload)}
+async function createSyncRun(fromDate: string, toDate: string): Promise<number> {
+  const [row] = await sql<{ id: number }[]>`
+    insert into acuity_sync_runs (
+      status,
+      started_at,
+      from_date,
+      to_date,
+      records_fetched,
+      records_inserted,
+      records_updated,
+      error_message
+    ) values (
+      ${'running' satisfies SyncStatus},
+      ${new Date().toISOString()},
+      ${fromDate},
+      ${toDate},
+      0,
+      0,
+      0,
+      null
+    )
     returning id
   `
 
-  return row?.id ?? null
+  return row.id
 }
 
-async function updateSyncRun(runId: number | null, update: Record<string, unknown>) {
-  if (!runId || !Object.keys(update).length) {
-    return
-  }
-
+async function updateSyncRun(runId: number, update: {
+  status: SyncStatus
+  finishedAt?: string
+  recordsFetched?: number
+  recordsInserted?: number
+  recordsUpdated?: number
+  errorMessage?: string | null
+}) {
   await sql`
     update acuity_sync_runs
-    set ${sql(update)}
+    set
+      status = ${update.status},
+      finished_at = coalesce(${update.finishedAt ?? null}, finished_at),
+      records_fetched = coalesce(${update.recordsFetched ?? null}, records_fetched),
+      records_inserted = coalesce(${update.recordsInserted ?? null}, records_inserted),
+      records_updated = coalesce(${update.recordsUpdated ?? null}, records_updated),
+      error_message = ${update.errorMessage ?? null}
     where id = ${runId}
   `
 }
@@ -202,113 +253,165 @@ export async function GET(request: Request) {
       }
     }
 
-    const appointmentColumns = await getTableColumns('acuity_appointments')
-    const clientColumns = await getTableColumns('acuity_clients')
-
-    let appointmentsUpserted = 0
-    let clientsUpserted = 0
+    let recordsInserted = 0
+    let recordsUpdated = 0
 
     for (const [appointmentId, appointment] of merged.entries()) {
-      const appointmentPayload: Record<string, unknown> = {}
-
-      if (appointmentColumns.has('acuity_appointment_id')) {
-        appointmentPayload.acuity_appointment_id = appointmentId
-      }
-      if (appointmentColumns.has('appointment_datetime') && typeof appointment.datetime === 'string') {
-        appointmentPayload.appointment_datetime = appointment.datetime
-      }
-      if (appointmentColumns.has('appointment_date') && typeof appointment.date === 'string') {
-        appointmentPayload.appointment_date = appointment.date
-      }
-      if (appointmentColumns.has('email')) {
-        appointmentPayload.email = normalizeEmail(appointment.email)
-      }
-      if (appointmentColumns.has('first_name') && typeof appointment.firstName === 'string') {
-        appointmentPayload.first_name = appointment.firstName
-      }
-      if (appointmentColumns.has('last_name') && typeof appointment.lastName === 'string') {
-        appointmentPayload.last_name = appointment.lastName
-      }
-      if (appointmentColumns.has('phone') && typeof appointment.phone === 'string') {
-        appointmentPayload.phone = appointment.phone
-      }
-      if (appointmentColumns.has('timezone') && typeof appointment.timezone === 'string') {
-        appointmentPayload.timezone = appointment.timezone
-      }
-      if (appointmentColumns.has('raw_payload')) {
-        appointmentPayload.raw_payload = appointment
-      }
-      if (appointmentColumns.has('updated_at')) {
-        appointmentPayload.updated_at = new Date().toISOString()
-      }
-
-      if (appointmentColumns.has('acuity_appointment_id')) {
-        await sql`
-          insert into acuity_appointments ${sql(appointmentPayload)}
-          on conflict (acuity_appointment_id) do update
-          set ${sql(appointmentPayload)}
-        `
-        appointmentsUpserted += 1
-      }
-
-      const email = normalizeEmail(appointment.email)
-      if (!email || !clientColumns.has('email')) {
+      const normalizedEmail = normalizeEmail(appointment.email)
+      if (!normalizedEmail) {
         continue
       }
 
-      const clientPayload: Record<string, unknown> = { email }
+      const clientFirstName = asString(appointment.firstName)
+      const clientLastName = asString(appointment.lastName)
+      const clientPhone = asString(appointment.phone)
 
-      if (clientColumns.has('first_name') && typeof appointment.firstName === 'string') {
-        clientPayload.first_name = appointment.firstName
-      }
-      if (clientColumns.has('last_name') && typeof appointment.lastName === 'string') {
-        clientPayload.last_name = appointment.lastName
-      }
-      if (clientColumns.has('phone') && typeof appointment.phone === 'string') {
-        clientPayload.phone = appointment.phone
-      }
-      if (clientColumns.has('updated_at')) {
-        clientPayload.updated_at = new Date().toISOString()
-      }
-      if (clientColumns.has('raw_payload')) {
-        clientPayload.raw_payload = appointment
-      }
-
-      await sql`
-        insert into acuity_clients ${sql(clientPayload)}
-        on conflict (email) do update
-        set ${sql(clientPayload)}
+      const [clientRow] = await sql<{ id: number }[]>`
+        insert into acuity_clients (
+          acuity_client_id,
+          first_name,
+          last_name,
+          email,
+          phone,
+          normalized_email,
+          normalized_phone,
+          first_seen_at,
+          last_seen_at,
+          raw_json,
+          updated_at
+        ) values (
+          null,
+          ${clientFirstName},
+          ${clientLastName},
+          ${normalizedEmail},
+          ${clientPhone},
+          ${normalizedEmail},
+          ${clientPhone},
+          now(),
+          now(),
+          ${appointment},
+          now()
+        )
+        on conflict (normalized_email) do update
+        set
+          first_name = excluded.first_name,
+          last_name = excluded.last_name,
+          email = excluded.email,
+          phone = excluded.phone,
+          normalized_phone = excluded.normalized_phone,
+          last_seen_at = now(),
+          raw_json = excluded.raw_json,
+          updated_at = now()
+        returning id
       `
-      clientsUpserted += 1
+
+      const packageInfo = inferPackage(appointment)
+      const [appointmentResult] = await sql<{ inserted: boolean }[]>`
+        insert into acuity_appointments (
+          acuity_appointment_id,
+          client_id,
+          client_email,
+          client_phone,
+          client_first_name,
+          client_last_name,
+          appointment_type_id,
+          appointment_type_name,
+          calendar_id,
+          calendar_name,
+          appointment_datetime,
+          created_datetime,
+          canceled,
+          canceled_datetime,
+          price,
+          paid_status,
+          certificate_code,
+          package_inferred,
+          package_inference_reason,
+          raw_json,
+          synced_at,
+          updated_at
+        ) values (
+          ${appointmentId},
+          ${clientRow.id},
+          ${normalizedEmail},
+          ${clientPhone},
+          ${clientFirstName},
+          ${clientLastName},
+          ${asInteger(appointment.appointmentTypeID)},
+          ${asString(appointment.type)},
+          ${asInteger(appointment.calendarID)},
+          ${asString(appointment.calendar)},
+          ${asString(appointment.datetime)},
+          ${asString(appointment.created)},
+          ${asBoolean(appointment.canceled)},
+          ${asString(appointment.canceledDateTime)},
+          ${asString(appointment.price)},
+          ${asString(appointment.paid)},
+          ${asString(appointment.certificate)},
+          ${packageInfo.inferred},
+          ${packageInfo.reason},
+          ${appointment},
+          now(),
+          now()
+        )
+        on conflict (acuity_appointment_id) do update
+        set
+          client_id = excluded.client_id,
+          client_email = excluded.client_email,
+          client_phone = excluded.client_phone,
+          client_first_name = excluded.client_first_name,
+          client_last_name = excluded.client_last_name,
+          appointment_type_id = excluded.appointment_type_id,
+          appointment_type_name = excluded.appointment_type_name,
+          calendar_id = excluded.calendar_id,
+          calendar_name = excluded.calendar_name,
+          appointment_datetime = excluded.appointment_datetime,
+          created_datetime = excluded.created_datetime,
+          canceled = excluded.canceled,
+          canceled_datetime = excluded.canceled_datetime,
+          price = excluded.price,
+          paid_status = excluded.paid_status,
+          certificate_code = excluded.certificate_code,
+          package_inferred = excluded.package_inferred,
+          package_inference_reason = excluded.package_inference_reason,
+          raw_json = excluded.raw_json,
+          synced_at = now(),
+          updated_at = now()
+        returning (xmax = 0) as inserted
+      `
+
+      if (appointmentResult?.inserted) {
+        recordsInserted += 1
+      } else {
+        recordsUpdated += 1
+      }
     }
 
-    const syncUpdate: Record<string, unknown> = {
-      status: 'success' satisfies SyncStatus,
-      finished_at: new Date().toISOString(),
-      records_fetched: merged.size,
-      records_upserted: appointmentsUpserted,
-    }
-
-    if ((await getTableColumns('acuity_sync_runs')).has('clients_upserted')) {
-      syncUpdate.clients_upserted = clientsUpserted
-    }
-
-    await updateSyncRun(runId, syncUpdate)
+    await updateSyncRun(runId, {
+      status: 'success',
+      finishedAt: new Date().toISOString(),
+      recordsFetched: merged.size,
+      recordsInserted,
+      recordsUpdated,
+      errorMessage: null,
+    })
 
     return Response.json({
       success: true,
       from: fromYmd,
       to: toYmd,
       recordsFetched: merged.size,
-      appointmentsUpserted,
-      clientsUpserted,
+      recordsInserted,
+      recordsUpdated,
     })
   } catch (error) {
-    await updateSyncRun(runId, {
-      status: 'failed' satisfies SyncStatus,
-      error_message: error instanceof Error ? error.message : 'Unknown sync error',
-      finished_at: new Date().toISOString(),
-    })
+    if (runId !== null) {
+      await updateSyncRun(runId, {
+        status: 'failed',
+        finishedAt: new Date().toISOString(),
+        errorMessage: error instanceof Error ? error.message : 'Unknown sync error',
+      })
+    }
 
     return Response.json(
       {
