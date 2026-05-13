@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export default function Home() {
   const dashboardCards = [
-    { title: "Acuity Bookings", href: "/acuity" },
+    { title: "Acuity Bookings", href: "/acuity/dashboard" },
     { title: "Stripe Payments" },
     { title: "Bank Statement Upload" },
     { title: "Reports" },
@@ -35,7 +35,7 @@ export default function Home() {
                   href={card.href}
                   className="mt-4 inline-flex text-sm font-medium text-zinc-200 underline decoration-zinc-700 underline-offset-4 transition-colors hover:text-zinc-50"
                 >
-                  View bookings
+                  Open Acuity dashboard
                 </Link>
               ) : null}
             </article>
