@@ -1,9 +1,11 @@
+import Link from "next/link";
+
 export default function Home() {
   const dashboardCards = [
-    "Acuity Bookings",
-    "Stripe Payments",
-    "Bank Statement Upload",
-    "Reports",
+    { title: "Acuity Bookings", href: "/acuity" },
+    { title: "Stripe Payments" },
+    { title: "Bank Statement Upload" },
+    { title: "Reports" },
   ];
 
   return (
@@ -21,13 +23,21 @@ export default function Home() {
         <section className="grid gap-4 sm:grid-cols-2">
           {dashboardCards.map((card) => (
             <article
-              key={card}
+              key={card.title}
               className="group rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-sm transition-colors hover:border-zinc-700 hover:bg-zinc-900"
             >
-              <h2 className="text-lg font-medium text-zinc-100">{card}</h2>
+              <h2 className="text-lg font-medium text-zinc-100">{card.title}</h2>
               <p className="mt-2 text-sm text-zinc-400">
                 Placeholder module — coming soon.
               </p>
+              {card.href ? (
+                <Link
+                  href={card.href}
+                  className="mt-4 inline-flex text-sm font-medium text-zinc-200 underline decoration-zinc-700 underline-offset-4 transition-colors hover:text-zinc-50"
+                >
+                  View bookings
+                </Link>
+              ) : null}
             </article>
           ))}
         </section>
