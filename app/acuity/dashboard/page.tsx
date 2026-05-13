@@ -2,13 +2,14 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { sql } from '@/lib/db'
 
-type LastSyncRun = { id:number; status:string; from_date:string|null; to_date:string|null; records_fetched:number|null; records_inserted:number|null; records_updated:number|null; records_skipped?:number|null; finished_at:string|null; error_message:string|null }
+type DateLike = string | Date | null | undefined
+type LastSyncRun = { id:number; status:string; from_date:DateLike; to_date:DateLike; records_fetched:number|null; records_inserted:number|null; records_updated:number|null; records_skipped?:number|null; finished_at:DateLike; error_message:string|null }
 type SummaryCounts = { total_appointments:number; total_clients:number; appointments_without_client:number; upcoming_appointments:number; cancelled_appointments:number }
 type NameCountRow = { label: string; count: number }
-type MonthCountRow = { month: string; count: number }
+type MonthCountRow = { month: DateLike; count: number }
 
-const formatDateTime = (v:string|null|undefined)=>!v?'—':(Number.isNaN(new Date(v).getTime())?v:new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)))
-const formatDate = (v:string|null|undefined)=>!v?'—':(Number.isNaN(new Date(`${v}T00:00:00.000Z`).getTime())?v:new Intl.DateTimeFormat('en-US',{dateStyle:'medium'}).format(new Date(`${v}T00:00:00.000Z`)))
+const formatDateTime = (v:DateLike)=>{ if(!v) return '—'; const d=v instanceof Date?v:new Date(v); return Number.isNaN(d.getTime())?String(v):new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short'}).format(d) }
+const formatDate = (v:DateLike)=>{ if(!v) return '—'; const d=v instanceof Date?v:new Date(String(v).includes('T')?String(v):`${v}T00:00:00.000Z`); return Number.isNaN(d.getTime())?String(v):new Intl.DateTimeFormat('en-US',{dateStyle:'medium'}).format(d) }
 
 async function hasRecordsSkippedColumn(){ const r=await sql`select exists (select 1 from information_schema.columns where table_schema='public' and table_name='acuity_sync_runs' and column_name='records_skipped') as has_records_skipped`; return Boolean((r[0] as {has_records_skipped:boolean}|undefined)?.has_records_skipped) }
 
@@ -31,8 +32,8 @@ export default async function AcuityDashboardPage(){
   const topClients=(await sql`select coalesce(nullif(trim(concat_ws(' ', c.first_name, c.last_name)), ''), c.email, a.client_email, 'Unknown client') as label, count(*)::int as count from acuity_appointments a left join acuity_clients c on c.id = a.client_id group by 1 order by count(*) desc, 1 asc limit 10`) as NameCountRow[]
   const byRoom=(await sql`select coalesce(nullif(calendar_name, ''), 'Unknown calendar') as label, count(*)::int as count from acuity_appointments group by 1 order by count(*) desc, 1 asc`) as NameCountRow[]
   const byType=(await sql`select coalesce(nullif(appointment_type_name, ''), 'Unknown type') as label, count(*)::int as count from acuity_appointments group by 1 order by count(*) desc, 1 asc`) as NameCountRow[]
-  const byAppointmentMonth=(await sql`select to_char(date_trunc('month', appointment_datetime), 'YYYY-MM') as month, count(*)::int as count from acuity_appointments where appointment_datetime is not null group by 1 order by 1 desc`) as MonthCountRow[]
-  const byCreatedMonth=(await sql`select to_char(date_trunc('month', created_datetime), 'YYYY-MM') as month, count(*)::int as count from acuity_appointments where created_datetime is not null group by 1 order by 1 desc`) as MonthCountRow[]
+  const byAppointmentMonth=(await sql`select date_trunc('month', appointment_datetime) as month, count(*)::int as count from acuity_appointments where appointment_datetime is not null group by 1 order by 1 desc`) as MonthCountRow[]
+  const byCreatedMonth=(await sql`select date_trunc('month', created_datetime) as month, count(*)::int as count from acuity_appointments where created_datetime is not null group by 1 order by 1 desc`) as MonthCountRow[]
   const recentRunsRows=hasSkipped?await sql`select status,from_date,to_date,records_fetched,records_inserted,records_updated,records_skipped,started_at,finished_at,error_message from acuity_sync_runs order by started_at desc limit 10`:await sql`select status,from_date,to_date,records_fetched,records_inserted,records_updated,started_at,finished_at,error_message from acuity_sync_runs order by started_at desc limit 10`
 
   return <div className="min-h-screen bg-zinc-950 text-zinc-100"><main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-12 sm:px-10 lg:px-12"><header className="space-y-2"><h1 className="text-3xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">Acuity Dashboard</h1><p className="text-sm text-zinc-400 sm:text-base">Synced booking and client data from Acuity</p></header>
@@ -45,4 +46,4 @@ export default async function AcuityDashboardPage(){
 }
 
 function InsightTable({title,rows,firstColumnLabel,secondColumnLabel}:{title:string;rows:NameCountRow[];firstColumnLabel:string;secondColumnLabel:string}){return <section className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5 overflow-x-auto"><h2 className="text-lg font-medium">{title}</h2><table className="mt-3 min-w-full divide-y divide-zinc-800 text-left text-sm"><thead className="text-zinc-300"><tr><th className="px-3 py-2 font-medium">{firstColumnLabel}</th><th className="px-3 py-2 font-medium">{secondColumnLabel}</th></tr></thead><tbody className="divide-y divide-zinc-800 text-zinc-200">{rows.length===0?<tr><td colSpan={2} className="px-3 py-3 text-zinc-400">No data yet.</td></tr>:rows.map((row)=><tr key={row.label}><td className="px-3 py-2">{row.label}</td><td className="px-3 py-2">{row.count}</td></tr>)}</tbody></table></section>}
-function MonthTable({title,rows,secondColumnLabel}:{title:string;rows:MonthCountRow[];secondColumnLabel:string}){return <InsightTable title={title} rows={rows.map((r)=>({label:r.month,count:r.count}))} firstColumnLabel="Month" secondColumnLabel={secondColumnLabel} />}
+function MonthTable({title,rows,secondColumnLabel}:{title:string;rows:MonthCountRow[];secondColumnLabel:string}){return <InsightTable title={title} rows={rows.map((r)=>({label:formatDate(r.month),count:r.count}))} firstColumnLabel="Month" secondColumnLabel={secondColumnLabel} />}
