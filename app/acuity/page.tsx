@@ -87,6 +87,7 @@ async function fetchAppointments(from: string, to: string): Promise<AcuityAppoin
   const authHeader = `Basic ${Buffer.from(`${userId}:${apiKey}`).toString("base64")}`;
   const url = new URL(ACUITY_APPOINTMENTS_URL);
   url.searchParams.set("max", "100");
+  url.searchParams.set("direction", "ASC");
   url.searchParams.set("minDate", from);
   url.searchParams.set("maxDate", to);
 
@@ -122,12 +123,12 @@ export default async function AcuityPage(props: { searchParams: Promise<SearchPa
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-12 sm:px-10 lg:px-12">
         <header className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight text-zinc-50 sm:text-4xl">Acuity Bookings</h1>
-          <p className="text-sm text-zinc-400 sm:text-base">Appointments for selected date range (up to 100 records).</p>
+          <p className="text-sm text-zinc-400 sm:text-base">Appointments for selected date range (earliest first, up to 100 records returned by Acuity).</p>
         </header>
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 sm:p-5">
           <p className="text-sm text-zinc-300">
-            Selected range: <span className="font-medium text-zinc-100">{from}</span> to <span className="font-medium text-zinc-100">{to}</span>
+            Selected range: <span className="font-medium text-zinc-100">{from}</span> to <span className="font-medium text-zinc-100">{to}</span> (sorted oldest to newest, max 100 results)
           </p>
           <form method="GET" className="mt-4 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
