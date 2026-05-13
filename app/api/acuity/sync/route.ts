@@ -18,6 +18,8 @@ type AcuityAppointment = {
   calendarID?: number | string
   calendar?: string
   created?: string
+  datetimeCreated?: string
+  dateCreated?: string
   canceled?: boolean | string | number
   canceledDateTime?: string
   price?: string | number
@@ -141,6 +143,15 @@ function asNumberString(value: unknown): string | null {
 
 function getCertificateCode(appointment: AcuityAppointment): string | null {
   return asString(appointment.certificateCode) ?? asString(appointment.certificate)
+}
+
+function getCreatedDateTime(appointment: AcuityAppointment): string | null {
+  return (
+    asString(appointment.datetimeCreated) ??
+    asString(appointment.created) ??
+    asString(appointment.dateCreated) ??
+    null
+  )
 }
 
 function inferPackage(appointment: AcuityAppointment): {
@@ -451,7 +462,7 @@ export async function GET(request: Request) {
           ${asInteger(appointment.calendarID)},
           ${asString(appointment.calendar)},
           ${asString(appointment.datetime)},
-          ${asString(appointment.created)},
+          ${getCreatedDateTime(appointment)},
           ${asBoolean(appointment.canceled)},
           ${asString(appointment.canceledDateTime)},
           ${asNumberString(appointment.price)},
