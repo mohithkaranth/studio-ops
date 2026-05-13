@@ -8,6 +8,12 @@ type AcuityAppointment = {
   type?: string;
   calendar?: string;
   datetime?: string;
+  datetimeCreated?: string;
+  created?: string;
+  paidDate?: string;
+  paymentDate?: string;
+  paidOn?: string;
+  datetimePaid?: string;
   price?: string | number | null;
   paid?: string | boolean | null;
 };
@@ -17,6 +23,14 @@ function formatDateTime(value?: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function getCreatedTimestamp(appointment: AcuityAppointment) {
+  return appointment.datetimeCreated ?? appointment.created;
+}
+
+function getPaymentTimestamp(appointment: AcuityAppointment) {
+  return appointment.paidDate ?? appointment.paymentDate ?? appointment.paidOn ?? appointment.datetimePaid;
 }
 
 async function fetchAppointments(): Promise<AcuityAppointment[]> {
@@ -69,16 +83,16 @@ export default async function AcuityPage() {
             <table className="min-w-full divide-y divide-zinc-800 text-left text-sm">
               <thead className="bg-zinc-900 text-zinc-300">
                 <tr>
-                  <th className="px-4 py-3 font-medium">ID</th><th className="px-4 py-3 font-medium">First Name</th><th className="px-4 py-3 font-medium">Last Name</th><th className="px-4 py-3 font-medium">Email</th><th className="px-4 py-3 font-medium">Appointment Type</th><th className="px-4 py-3 font-medium">Calendar</th><th className="px-4 py-3 font-medium">Date/Time</th><th className="px-4 py-3 font-medium">Price</th><th className="px-4 py-3 font-medium">Paid</th>
+                  <th className="px-4 py-3 font-medium">ID</th><th className="px-4 py-3 font-medium">First Name</th><th className="px-4 py-3 font-medium">Last Name</th><th className="px-4 py-3 font-medium">Email</th><th className="px-4 py-3 font-medium">Appointment Type</th><th className="px-4 py-3 font-medium">Calendar</th><th className="px-4 py-3 font-medium">Appointment Date</th><th className="px-4 py-3 font-medium">Created Date</th><th className="px-4 py-3 font-medium">Payment Date</th><th className="px-4 py-3 font-medium">Price</th><th className="px-4 py-3 font-medium">Paid</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800 text-zinc-200">
                 {appointments.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-6 text-center text-zinc-400">No appointments found.</td></tr>
+                  <tr><td colSpan={11} className="px-4 py-6 text-center text-zinc-400">No appointments found.</td></tr>
                 ) : (
                   appointments.map((appointment) => (
                     <tr key={appointment.id} className="hover:bg-zinc-900">
-                      <td className="px-4 py-3">{appointment.id}</td><td className="px-4 py-3">{appointment.firstName ?? "—"}</td><td className="px-4 py-3">{appointment.lastName ?? "—"}</td><td className="px-4 py-3">{appointment.email ?? "—"}</td><td className="px-4 py-3">{appointment.type ?? "—"}</td><td className="px-4 py-3">{appointment.calendar ?? "—"}</td><td className="px-4 py-3">{formatDateTime(appointment.datetime)}</td><td className="px-4 py-3">{appointment.price ?? "—"}</td><td className="px-4 py-3">{appointment.paid == null ? "—" : String(appointment.paid)}</td>
+                      <td className="px-4 py-3">{appointment.id}</td><td className="px-4 py-3">{appointment.firstName ?? "—"}</td><td className="px-4 py-3">{appointment.lastName ?? "—"}</td><td className="px-4 py-3">{appointment.email ?? "—"}</td><td className="px-4 py-3">{appointment.type ?? "—"}</td><td className="px-4 py-3">{appointment.calendar ?? "—"}</td><td className="px-4 py-3">{formatDateTime(appointment.datetime)}</td><td className="px-4 py-3">{formatDateTime(getCreatedTimestamp(appointment))}</td><td className="px-4 py-3">{formatDateTime(getPaymentTimestamp(appointment))}</td><td className="px-4 py-3">{appointment.price ?? "—"}</td><td className="px-4 py-3">{appointment.paid == null ? "—" : String(appointment.paid)}</td>
                     </tr>
                   ))
                 )}
