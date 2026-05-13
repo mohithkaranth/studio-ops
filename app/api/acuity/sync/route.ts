@@ -119,7 +119,7 @@ function inferPackage(appointment: AcuityAppointment): { inferred: string | null
 }
 
 async function createSyncRun(fromDate: string, toDate: string): Promise<number> {
-  const [row] = await sql<{ id: number }[]>`
+  const rows = await sql`
     insert into acuity_sync_runs (
       status,
       started_at,
@@ -141,6 +141,11 @@ async function createSyncRun(fromDate: string, toDate: string): Promise<number> 
     )
     returning id
   `
+  const row = rows[0] as { id: number } | undefined
+
+  if (!row) {
+    throw new Error('Failed to create sync run.')
+  }
 
   return row.id
 }
@@ -151,8 +156,35 @@ async function updateSyncRun(runId: number, update: {
   recordsFetched?: number
   recordsInserted?: number
   recordsUpdated?: number
+  recordsSkipped?: number
   errorMessage?: string | null
 }) {
+  const columnRows = await sql`
+    select exists (
+      select 1
+      from information_schema.columns
+      where table_name = 'acuity_sync_runs'
+        and column_name = 'records_skipped'
+    ) as has_records_skipped
+  `
+  const columnInfo = columnRows[0] as { has_records_skipped: boolean } | undefined
+
+  if (columnInfo?.has_records_skipped) {
+    await sql`
+      update acuity_sync_runs
+      set
+        status = ${update.status},
+        finished_at = coalesce(${update.finishedAt ?? null}, finished_at),
+        records_fetched = coalesce(${update.recordsFetched ?? null}, records_fetched),
+        records_inserted = coalesce(${update.recordsInserted ?? null}, records_inserted),
+        records_updated = coalesce(${update.recordsUpdated ?? null}, records_updated),
+        records_skipped = coalesce(${update.recordsSkipped ?? null}, records_skipped),
+        error_message = ${update.errorMessage ?? null}
+      where id = ${runId}
+    `
+    return
+  }
+
   await sql`
     update acuity_sync_runs
     set
@@ -239,13 +271,17 @@ export async function GET(request: Request) {
     const authHeader = `Basic ${Buffer.from(`${userId}:${apiKey}`).toString('base64')}`
     const days = eachUtcDay(fromDate, toDate)
     const merged = new Map<string, AcuityAppointment>()
+    let recordsFetched = 0
+    let recordsSkipped = 0
 
     for (const day of days) {
       const dailyAppointments = await fetchAppointmentsForDay(day, authHeader)
+      recordsFetched += dailyAppointments.length
 
       for (const appointment of dailyAppointments) {
         const appointmentId = appointment.id
         if (appointmentId === undefined || appointmentId === null) {
+          recordsSkipped += 1
           continue
         }
 
@@ -258,55 +294,57 @@ export async function GET(request: Request) {
 
     for (const [appointmentId, appointment] of merged.entries()) {
       const normalizedEmail = normalizeEmail(appointment.email)
-      if (!normalizedEmail) {
-        continue
-      }
-
       const clientFirstName = asString(appointment.firstName)
       const clientLastName = asString(appointment.lastName)
       const clientPhone = asString(appointment.phone)
+      let clientId: number | null = null
 
-      const [clientRow] = await sql<{ id: number }[]>`
-        insert into acuity_clients (
-          acuity_client_id,
-          first_name,
-          last_name,
-          email,
-          phone,
-          normalized_email,
-          normalized_phone,
-          first_seen_at,
-          last_seen_at,
-          raw_json,
-          updated_at
-        ) values (
-          null,
-          ${clientFirstName},
-          ${clientLastName},
-          ${normalizedEmail},
-          ${clientPhone},
-          ${normalizedEmail},
-          ${clientPhone},
-          now(),
-          now(),
-          ${appointment},
-          now()
-        )
-        on conflict (normalized_email) do update
-        set
-          first_name = excluded.first_name,
-          last_name = excluded.last_name,
-          email = excluded.email,
-          phone = excluded.phone,
-          normalized_phone = excluded.normalized_phone,
-          last_seen_at = now(),
-          raw_json = excluded.raw_json,
-          updated_at = now()
-        returning id
-      `
+      if (normalizedEmail) {
+        const clientRows = await sql`
+          insert into acuity_clients (
+            acuity_client_id,
+            first_name,
+            last_name,
+            email,
+            phone,
+            normalized_email,
+            normalized_phone,
+            first_seen_at,
+            last_seen_at,
+            raw_json,
+            updated_at
+          ) values (
+            null,
+            ${clientFirstName},
+            ${clientLastName},
+            ${normalizedEmail},
+            ${clientPhone},
+            ${normalizedEmail},
+            ${clientPhone},
+            now(),
+            now(),
+            ${appointment},
+            now()
+          )
+          on conflict (normalized_email) do update
+          set
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            email = excluded.email,
+            phone = excluded.phone,
+            normalized_phone = excluded.normalized_phone,
+            last_seen_at = now(),
+            raw_json = excluded.raw_json,
+            updated_at = now()
+          returning id
+        `
+        const clientRow = clientRows[0] as { id: number } | undefined
+
+        clientId = clientRow?.id ?? null
+      }
 
       const packageInfo = inferPackage(appointment)
-      const [appointmentResult] = await sql<{ inserted: boolean }[]>`
+      const appointmentRows = await sql`
         insert into acuity_appointments (
           acuity_appointment_id,
           client_id,
@@ -332,7 +370,7 @@ export async function GET(request: Request) {
           updated_at
         ) values (
           ${appointmentId},
-          ${clientRow.id},
+          ${clientId},
           ${normalizedEmail},
           ${clientPhone},
           ${clientFirstName},
@@ -379,6 +417,7 @@ export async function GET(request: Request) {
           updated_at = now()
         returning (xmax = 0) as inserted
       `
+      const appointmentResult = appointmentRows[0] as { inserted: boolean } | undefined
 
       if (appointmentResult?.inserted) {
         recordsInserted += 1
@@ -390,9 +429,10 @@ export async function GET(request: Request) {
     await updateSyncRun(runId, {
       status: 'success',
       finishedAt: new Date().toISOString(),
-      recordsFetched: merged.size,
+      recordsFetched,
       recordsInserted,
       recordsUpdated,
+      recordsSkipped,
       errorMessage: null,
     })
 
@@ -400,9 +440,10 @@ export async function GET(request: Request) {
       success: true,
       from: fromYmd,
       to: toYmd,
-      recordsFetched: merged.size,
+      recordsFetched,
       recordsInserted,
       recordsUpdated,
+      recordsSkipped,
     })
   } catch (error) {
     if (runId !== null) {
