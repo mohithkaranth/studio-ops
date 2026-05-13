@@ -21,8 +21,9 @@ type AcuityAppointment = {
   canceled?: boolean | string | number
   canceledDateTime?: string
   price?: string | number
-  paid?: string
+  paid?: string | boolean | number
   certificate?: string
+  certificateCode?: string
   [key: string]: unknown
 }
 
@@ -32,23 +33,24 @@ const hasOwn = (obj: Record<string, unknown>, key: string) =>
   Object.prototype.hasOwnProperty.call(obj, key)
 
 function normalizeEmail(email: unknown): string | null {
-  if (typeof email !== 'string') {
-    return null
-  }
+  if (typeof email !== 'string') return null
 
   const normalized = email.trim().toLowerCase()
   return normalized.length ? normalized : null
 }
 
+function normalizePhone(phone: unknown): string | null {
+  if (typeof phone !== 'string') return null
+
+  const normalized = phone.replace(/\s+/g, '').trim()
+  return normalized.length ? normalized : null
+}
+
 function parseDateParam(value: string | null): Date | null {
-  if (!value || !DATE_ONLY_RE.test(value)) {
-    return null
-  }
+  if (!value || !DATE_ONLY_RE.test(value)) return null
 
   const parsed = new Date(`${value}T00:00:00.000Z`)
-  if (Number.isNaN(parsed.getTime())) {
-    return null
-  }
+  if (Number.isNaN(parsed.getTime())) return null
 
   return parsed
 }
@@ -78,48 +80,100 @@ function eachUtcDay(from: Date, to: Date): string[] {
 }
 
 function asString(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed.length ? trimmed : null
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length ? trimmed : null
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
+
+  if (typeof value === 'boolean') {
+    return String(value)
+  }
+
+  return null
 }
 
 function asInteger(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.trunc(value)
   }
+
   if (typeof value === 'string') {
     const parsed = Number.parseInt(value, 10)
     if (Number.isFinite(parsed)) return parsed
   }
+
   return null
 }
 
 function asBoolean(value: unknown): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
+
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase()
     if (!normalized) return false
     if (normalized === 'false' || normalized === '0' || normalized === 'no') return false
     return true
   }
+
   return false
 }
 
-function inferPackage(appointment: AcuityAppointment): { inferred: string | null; reason: string } {
-  const typeName = asString(appointment.type)
-  if (!typeName) {
-    return { inferred: null, reason: 'No appointment type name provided.' }
+function asNumberString(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+
+    const parsed = Number(trimmed)
+    if (Number.isFinite(parsed)) return trimmed
+  }
+
+  return null
+}
+
+function getCertificateCode(appointment: AcuityAppointment): string | null {
+  return asString(appointment.certificateCode) ?? asString(appointment.certificate)
+}
+
+function inferPackage(appointment: AcuityAppointment): {
+  inferred: boolean
+  reason: string | null
+} {
+  const certificateCode = getCertificateCode(appointment)
+
+  if (certificateCode) {
+    return {
+      inferred: true,
+      reason: 'Certificate/package code present on appointment.',
+    }
+  }
+
+  const price = Number(asNumberString(appointment.price) ?? NaN)
+  const paidStatus = asString(appointment.paid)?.toLowerCase() ?? null
+
+  if (Number.isFinite(price) && price === 0 && (!paidStatus || paidStatus === 'false' || paidStatus === '0')) {
+    return {
+      inferred: true,
+      reason: 'Zero price and not marked paid.',
+    }
   }
 
   return {
-    inferred: typeName,
-    reason: 'Derived from appointment type name.',
+    inferred: false,
+    reason: null,
   }
 }
 
 async function createSyncRun(fromDate: string, toDate: string): Promise<number> {
-  const [row] = await sql<{ id: number }[]>`
+  const rows = await sql`
     insert into acuity_sync_runs (
       status,
       started_at,
@@ -131,7 +185,7 @@ async function createSyncRun(fromDate: string, toDate: string): Promise<number> 
       error_message
     ) values (
       ${'running' satisfies SyncStatus},
-      ${new Date().toISOString()},
+      now(),
       ${fromDate},
       ${toDate},
       0,
@@ -142,33 +196,44 @@ async function createSyncRun(fromDate: string, toDate: string): Promise<number> 
     returning id
   `
 
+  const row = rows[0] as { id: number } | undefined
+
+  if (!row) {
+    throw new Error('Failed to create Acuity sync run.')
+  }
+
   return row.id
 }
 
-async function updateSyncRun(runId: number, update: {
-  status: SyncStatus
-  finishedAt?: string
-  recordsFetched?: number
-  recordsInserted?: number
-  recordsUpdated?: number
-  recordsSkipped?: number
-  errorMessage?: string | null
-}) {
-  const [columnInfo] = await sql<{ has_records_skipped: boolean }[]>`
+async function updateSyncRun(
+  runId: number,
+  update: {
+    status: SyncStatus
+    recordsFetched?: number
+    recordsInserted?: number
+    recordsUpdated?: number
+    recordsSkipped?: number
+    errorMessage?: string | null
+  },
+) {
+  const columnRows = await sql`
     select exists (
       select 1
       from information_schema.columns
-      where table_name = 'acuity_sync_runs'
+      where table_schema = 'public'
+        and table_name = 'acuity_sync_runs'
         and column_name = 'records_skipped'
     ) as has_records_skipped
   `
+
+  const columnInfo = columnRows[0] as { has_records_skipped: boolean } | undefined
 
   if (columnInfo?.has_records_skipped) {
     await sql`
       update acuity_sync_runs
       set
         status = ${update.status},
-        finished_at = coalesce(${update.finishedAt ?? null}, finished_at),
+        finished_at = now(),
         records_fetched = coalesce(${update.recordsFetched ?? null}, records_fetched),
         records_inserted = coalesce(${update.recordsInserted ?? null}, records_inserted),
         records_updated = coalesce(${update.recordsUpdated ?? null}, records_updated),
@@ -183,7 +248,7 @@ async function updateSyncRun(runId: number, update: {
     update acuity_sync_runs
     set
       status = ${update.status},
-      finished_at = coalesce(${update.finishedAt ?? null}, finished_at),
+      finished_at = now(),
       records_fetched = coalesce(${update.recordsFetched ?? null}, records_fetched),
       records_inserted = coalesce(${update.recordsInserted ?? null}, records_inserted),
       records_updated = coalesce(${update.recordsUpdated ?? null}, records_updated),
@@ -265,6 +330,7 @@ export async function GET(request: Request) {
     const authHeader = `Basic ${Buffer.from(`${userId}:${apiKey}`).toString('base64')}`
     const days = eachUtcDay(fromDate, toDate)
     const merged = new Map<string, AcuityAppointment>()
+
     let recordsFetched = 0
     let recordsSkipped = 0
 
@@ -274,6 +340,7 @@ export async function GET(request: Request) {
 
       for (const appointment of dailyAppointments) {
         const appointmentId = appointment.id
+
         if (appointmentId === undefined || appointmentId === null) {
           recordsSkipped += 1
           continue
@@ -287,14 +354,20 @@ export async function GET(request: Request) {
     let recordsUpdated = 0
 
     for (const [appointmentId, appointment] of merged.entries()) {
+      const appointmentJson = JSON.stringify(appointment)
+
       const normalizedEmail = normalizeEmail(appointment.email)
       const clientFirstName = asString(appointment.firstName)
       const clientLastName = asString(appointment.lastName)
       const clientPhone = asString(appointment.phone)
+      const normalizedPhone = normalizePhone(appointment.phone)
+      const certificateCode = getCertificateCode(appointment)
+      const packageInfo = inferPackage(appointment)
+
       let clientId: number | null = null
 
       if (normalizedEmail) {
-        const [clientRow] = await sql<{ id: number }[]>`
+        const clientRows = await sql`
           insert into acuity_clients (
             acuity_client_id,
             first_name,
@@ -314,10 +387,10 @@ export async function GET(request: Request) {
             ${normalizedEmail},
             ${clientPhone},
             ${normalizedEmail},
-            ${clientPhone},
+            ${normalizedPhone},
             now(),
             now(),
-            ${appointment},
+            ${appointmentJson}::jsonb,
             now()
           )
           on conflict (normalized_email) do update
@@ -333,11 +406,16 @@ export async function GET(request: Request) {
           returning id
         `
 
+        const clientRow = clientRows[0] as { id: number } | undefined
+
+        if (!clientRow) {
+          throw new Error('Client upsert failed.')
+        }
+
         clientId = clientRow.id
       }
 
-      const packageInfo = inferPackage(appointment)
-      const [appointmentResult] = await sql<{ inserted: boolean }[]>`
+      const appointmentRows = await sql`
         insert into acuity_appointments (
           acuity_appointment_id,
           client_id,
@@ -376,12 +454,12 @@ export async function GET(request: Request) {
           ${asString(appointment.created)},
           ${asBoolean(appointment.canceled)},
           ${asString(appointment.canceledDateTime)},
-          ${asString(appointment.price)},
+          ${asNumberString(appointment.price)},
           ${asString(appointment.paid)},
-          ${asString(appointment.certificate)},
+          ${certificateCode},
           ${packageInfo.inferred},
           ${packageInfo.reason},
-          ${appointment},
+          ${appointmentJson}::jsonb,
           now(),
           now()
         )
@@ -411,6 +489,8 @@ export async function GET(request: Request) {
         returning (xmax = 0) as inserted
       `
 
+      const appointmentResult = appointmentRows[0] as { inserted: boolean } | undefined
+
       if (appointmentResult?.inserted) {
         recordsInserted += 1
       } else {
@@ -420,7 +500,6 @@ export async function GET(request: Request) {
 
     await updateSyncRun(runId, {
       status: 'success',
-      finishedAt: new Date().toISOString(),
       recordsFetched,
       recordsInserted,
       recordsUpdated,
@@ -441,7 +520,6 @@ export async function GET(request: Request) {
     if (runId !== null) {
       await updateSyncRun(runId, {
         status: 'failed',
-        finishedAt: new Date().toISOString(),
         errorMessage: error instanceof Error ? error.message : 'Unknown sync error',
       })
     }
