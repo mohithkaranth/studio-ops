@@ -49,8 +49,12 @@ function isValidDateInput(value?: string) {
   return !Number.isNaN(parsed.getTime()) && formatDateInput(parsed) === value;
 }
 
-function normalizeQueryValue(value: string | string[] | undefined) {
+function normalizeQueryValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function getValidDateOrFallback(value: string | undefined, fallback: string): string {
+  return isValidDateInput(value) ? value : fallback;
 }
 
 function getDateRange(searchParams: SearchParams) {
@@ -61,8 +65,8 @@ function getDateRange(searchParams: SearchParams) {
   const rawFrom = normalizeQueryValue(searchParams.from);
   const rawTo = normalizeQueryValue(searchParams.to);
 
-  const from = isValidDateInput(rawFrom) ? rawFrom : defaultFrom;
-  const to = isValidDateInput(rawTo) ? rawTo : defaultTo;
+  const from = getValidDateOrFallback(rawFrom, defaultFrom);
+  const to = getValidDateOrFallback(rawTo, defaultTo);
 
   if (from > to) {
     return { from: to, to: from };
