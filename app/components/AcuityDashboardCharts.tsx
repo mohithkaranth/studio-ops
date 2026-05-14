@@ -65,7 +65,7 @@ function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) {
 
   return (
     <div className="h-72 min-w-0 w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height={288} minWidth={0}>
         <LineChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
           <XAxis
@@ -110,7 +110,7 @@ function TopClientsChart({ data }: { data: ClientPoint[] }) {
 
   return (
     <div className="h-80 min-w-0 w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height={320} minWidth={0}>
         <BarChart data={mapped} margin={{ top: 12, right: 16, left: 0, bottom: 46 }}>
           <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
           <XAxis
@@ -167,7 +167,7 @@ function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) {
 
   return (
     <div className="h-80 min-w-0 w-full">
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height={320} minWidth={0}>
         <BarChart data={rows} margin={{ top: 12, right: 16, left: 0, bottom: 20 }}>
           <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
           <XAxis
@@ -212,7 +212,7 @@ export default function AcuityDashboardCharts({
     <section className="grid gap-6 md:grid-cols-2">
       <Link
         href="/acuity?report=appointment-date"
-        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
       >
         <h2 className="text-lg font-medium">Bookings by appointment month</h2>
         <p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p>
@@ -221,7 +221,7 @@ export default function AcuityDashboardCharts({
 
       <Link
         href="/acuity?report=booking-date"
-        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
       >
         <h2 className="text-lg font-medium">Bookings by booking created month</h2>
         <p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p>
@@ -230,7 +230,7 @@ export default function AcuityDashboardCharts({
 
       <Link
         href="/acuity?report=top-clients"
-        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
       >
         <h2 className="text-lg font-medium">Top 10 clients by total bookings</h2>
         <p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p>
@@ -239,7 +239,7 @@ export default function AcuityDashboardCharts({
 
       <Link
         href="/acuity?report=calendar-month"
-        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
       >
         <h2 className="text-lg font-medium">Bookings by calendar name per appointment month</h2>
         <p className="mb-2 text-xs text-zinc-400">Monthly room/calendar booking mix.</p>
