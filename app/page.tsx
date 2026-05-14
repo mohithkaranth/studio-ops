@@ -176,31 +176,31 @@ export default async function Home() {
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-14 sm:px-10 lg:px-12">
         <header className="space-y-2">
           <h1 className="text-4xl font-semibold tracking-tight text-zinc-50">Acuity Dashboard</h1>
-          <p className="text-sm text-zinc-400">Last 12 months from acuity_appointments.</p>
+          <p className="text-sm text-zinc-400">Last 12 months of booking trends from synced Acuity data.</p>
         </header>
 
-        <section className="grid gap-4 lg:grid-cols-2">
-          <Link href="/acuity?report=appointment-date" className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 hover:border-zinc-700">
+        <section className="grid gap-6 md:grid-cols-2">
+          <Link href="/acuity?report=appointment-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Bookings by appointment month</h2>
-            <p className="mb-2 text-xs text-zinc-400">Monthly trend by appointment_datetime.</p>
+            <p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p>
             <LineChart data={appointmentMonthly} color="#22d3ee" />
           </Link>
 
-          <Link href="/acuity?report=booking-date" className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 hover:border-zinc-700">
+          <Link href="/acuity?report=booking-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Bookings by booking created month</h2>
-            <p className="mb-2 text-xs text-zinc-400">Monthly trend by created_datetime.</p>
+            <p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p>
             <LineChart data={bookingCreatedMonthly} color="#a78bfa" />
           </Link>
 
-          <Link href="/acuity?report=top-clients" className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 hover:border-zinc-700">
+          <Link href="/acuity?report=top-clients" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Top 10 clients by total bookings</h2>
-            <p className="mb-2 text-xs text-zinc-400">Sorted descending by booking_count.</p>
+            <p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p>
             <VerticalBarChart data={topClients} />
           </Link>
 
-          <Link href="/acuity?report=calendar-month" className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 hover:border-zinc-700">
+          <Link href="/acuity?report=calendar-month" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Bookings by calendar name per appointment month</h2>
-            <p className="mb-2 text-xs text-zinc-400">Monthly bookings split by calendar_name.</p>
+            <p className="mb-2 text-xs text-zinc-400">Monthly room/calendar booking mix.</p>
             <CalendarMonthChart data={calendarMonthly} />
           </Link>
         </section>
