@@ -2,6 +2,8 @@ import Link from "next/link";
 
 import { sql } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 type Point = { month_label: string; booking_count: number };
 type ClientPoint = { client_name: string; booking_count: number };
 type DualPoint = { month_label: string; total_bookings: number; cancelled_bookings: number };
@@ -130,7 +132,11 @@ export default async function Home() {
     `,
     sql<ClientPoint[]>`
       select
-        coalesce(nullif(trim(first_name || ' ' || last_name), ''), email, 'Unknown') as client_name,
+        coalesce(
+          nullif(trim(client_first_name || ' ' || client_last_name), ''),
+          client_email,
+          'Unknown'
+        ) as client_name,
         count(*)::int as booking_count
       from acuity_appointments
       where appointment_datetime is not null
