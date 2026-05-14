@@ -16,14 +16,235 @@ import {
 
 type Point = { month_label: string; booking_count: number };
 type ClientPoint = { client_name: string; booking_count: number };
-type CalendarMonthPoint = { month_label: string; calendar_name: string; booking_count: number };
-type CalendarMonthChartPoint = { month_label: string; [calendar: string]: string | number };
+type CalendarMonthPoint = {
+  month_label: string;
+  calendar_name: string;
+  booking_count: number;
+};
+type CalendarMonthChartPoint = {
+  month_label: string;
+  [calendar: string]: string | number;
+};
 
-function EmptyState() { return <div className="flex h-72 items-center justify-center text-sm text-zinc-500">No data available for the last 12 months.</div>; }
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number }>; label?: string }) { if (!active || !payload?.length) return null; return <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-100 shadow-lg">{label ? <p className="mb-1 text-zinc-300">{label}</p> : null}<div className="space-y-0.5">{payload.map((item) => <p key={item.name} className="text-zinc-200"><span className="text-zinc-400">{item.name}: </span><span>{item.value ?? 0}</span></p>)}</div></div>; }
-function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) { if (data.length === 0) return <EmptyState />; return <div className="h-72 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}><CartesianGrid stroke="#27272a" strokeDasharray="3 4" /><XAxis dataKey="month_label" interval={0} angle={-35} textAnchor="end" height={60} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><Tooltip content={<ChartTooltip />} /><Line type="monotone" dataKey="booking_count" stroke={color} strokeWidth={2.5} dot={{ r: 3.5, fill: color }} activeDot={{ r: 5 }} name="Bookings" /></LineChart></ResponsiveContainer></div>; }
-const truncateClient=(name:string)=>name.length>18?`${name.slice(0,18)}…`:name;
-function TopClientsChart({ data }: { data: ClientPoint[] }) { if (data.length === 0) return <EmptyState />; const mapped = data.map((d) => ({ ...d, short_name: truncateClient(d.client_name) })); return <div className="h-80 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={mapped} margin={{ top: 12, right: 16, left: 0, bottom: 46 }}><CartesianGrid stroke="#27272a" strokeDasharray="3 4" /><XAxis dataKey="short_name" interval={0} angle={-30} textAnchor="end" height={56} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><Tooltip content={<ChartTooltip />} formatter={(value) => [value, "Bookings"]} labelFormatter={(_, payload) => payload?.[0]?.payload?.client_name ?? "Client"} /><Bar dataKey="booking_count" fill="#60a5fa" radius={[6, 6, 0, 0]} name="Bookings" /></BarChart></ResponsiveContainer></div>; }
-function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) { if (data.length === 0) return <EmptyState />; const calendars = [...new Set(data.map((d) => d.calendar_name))]; const monthMap = new Map<string, CalendarMonthChartPoint>(); data.forEach((item) => { const existing = monthMap.get(item.month_label) ?? { month_label: item.month_label }; existing[item.calendar_name] = item.booking_count; monthMap.set(item.month_label, existing); }); const rows = Array.from(monthMap.values()); const colors = ["#22d3ee", "#f59e0b", "#a78bfa", "#34d399", "#f87171", "#60a5fa", "#f472b6", "#c4b5fd"]; return <div className="h-80 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} margin={{ top: 12, right: 16, left: 0, bottom: 20 }}><CartesianGrid stroke="#27272a" strokeDasharray="3 4" /><XAxis dataKey="month_label" interval={0} angle={-35} textAnchor="end" height={60} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} /><Tooltip content={<ChartTooltip />} /><Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />{calendars.map((calendar, index) => <Bar key={calendar} dataKey={calendar} fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />)}</BarChart></ResponsiveContainer></div>; }
+function EmptyState() {
+  return (
+    <div className="flex h-72 min-w-0 items-center justify-center text-sm text-zinc-500">
+      No data available for the last 12 months.
+    </div>
+  );
+}
 
-export default function AcuityDashboardCharts({ appointmentMonthly, bookingCreatedMonthly, topClients, calendarMonthly }: { appointmentMonthly: Point[]; bookingCreatedMonthly: Point[]; topClients: ClientPoint[]; calendarMonthly: CalendarMonthPoint[]; }) { return <section className="grid gap-6 md:grid-cols-2"><Link href="/acuity?report=appointment-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"><h2 className="text-lg font-medium">Bookings by appointment month</h2><p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p><MonthlyLineChart data={appointmentMonthly} color="#22d3ee" /></Link><Link href="/acuity?report=booking-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"><h2 className="text-lg font-medium">Bookings by booking created month</h2><p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p><MonthlyLineChart data={bookingCreatedMonthly} color="#a78bfa" /></Link><Link href="/acuity?report=top-clients" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"><h2 className="text-lg font-medium">Top 10 clients by total bookings</h2><p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p><TopClientsChart data={topClients} /></Link><Link href="/acuity?report=calendar-month" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"><h2 className="text-lg font-medium">Bookings by calendar name per appointment month</h2><p className="mb-2 text-xs text-zinc-400">Monthly room/calendar booking mix.</p><CalendarMonthChart data={calendarMonthly} /></Link></section>; }
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ name?: string; value?: number }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-100 shadow-lg">
+      {label ? <p className="mb-1 text-zinc-300">{label}</p> : null}
+      <div className="space-y-0.5">
+        {payload.map((item) => (
+          <p key={item.name} className="text-zinc-200">
+            <span className="text-zinc-400">{item.name}: </span>
+            <span>{item.value ?? 0}</span>
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) {
+  if (data.length === 0) return <EmptyState />;
+
+  return (
+    <div className="h-72 min-w-0 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis
+            dataKey="month_label"
+            interval={0}
+            angle={-35}
+            textAnchor="end"
+            height={60}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <YAxis
+            allowDecimals={false}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <Tooltip content={<ChartTooltip />} />
+          <Line
+            type="monotone"
+            dataKey="booking_count"
+            stroke={color}
+            strokeWidth={2.5}
+            dot={{ r: 3.5, fill: color }}
+            activeDot={{ r: 5 }}
+            name="Bookings"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const truncateClient = (name: string) =>
+  name.length > 18 ? `${name.slice(0, 18)}…` : name;
+
+function TopClientsChart({ data }: { data: ClientPoint[] }) {
+  if (data.length === 0) return <EmptyState />;
+
+  const mapped = data.map((d) => ({ ...d, short_name: truncateClient(d.client_name) }));
+
+  return (
+    <div className="h-80 min-w-0 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={mapped} margin={{ top: 12, right: 16, left: 0, bottom: 46 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis
+            dataKey="short_name"
+            interval={0}
+            angle={-30}
+            textAnchor="end"
+            height={56}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <YAxis
+            allowDecimals={false}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <Tooltip
+            content={<ChartTooltip />}
+            formatter={(value) => [value, "Bookings"]}
+            labelFormatter={(_, payload) => payload?.[0]?.payload?.client_name ?? "Client"}
+          />
+          <Bar dataKey="booking_count" fill="#60a5fa" radius={[6, 6, 0, 0]} name="Bookings" />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) {
+  if (data.length === 0) return <EmptyState />;
+
+  const calendars = [...new Set(data.map((d) => d.calendar_name))];
+  const monthMap = new Map<string, CalendarMonthChartPoint>();
+
+  data.forEach((item) => {
+    const existing = monthMap.get(item.month_label) ?? { month_label: item.month_label };
+    existing[item.calendar_name] = item.booking_count;
+    monthMap.set(item.month_label, existing);
+  });
+
+  const rows = Array.from(monthMap.values());
+  const colors = [
+    "#22d3ee",
+    "#f59e0b",
+    "#a78bfa",
+    "#34d399",
+    "#f87171",
+    "#60a5fa",
+    "#f472b6",
+    "#c4b5fd",
+  ];
+
+  return (
+    <div className="h-80 min-w-0 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 12, right: 16, left: 0, bottom: 20 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis
+            dataKey="month_label"
+            interval={0}
+            angle={-35}
+            textAnchor="end"
+            height={60}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <YAxis
+            allowDecimals={false}
+            tick={{ fill: "#a1a1aa", fontSize: 11 }}
+            axisLine={{ stroke: "#52525b" }}
+            tickLine={{ stroke: "#52525b" }}
+          />
+          <Tooltip content={<ChartTooltip />} />
+          <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+          {calendars.map((calendar, index) => (
+            <Bar key={calendar} dataKey={calendar} fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export default function AcuityDashboardCharts({
+  appointmentMonthly,
+  bookingCreatedMonthly,
+  topClients,
+  calendarMonthly,
+}: {
+  appointmentMonthly: Point[];
+  bookingCreatedMonthly: Point[];
+  topClients: ClientPoint[];
+  calendarMonthly: CalendarMonthPoint[];
+}) {
+  return (
+    <section className="grid gap-6 md:grid-cols-2">
+      <Link
+        href="/acuity?report=appointment-date"
+        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+      >
+        <h2 className="text-lg font-medium">Bookings by appointment month</h2>
+        <p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p>
+        <MonthlyLineChart data={appointmentMonthly} color="#22d3ee" />
+      </Link>
+
+      <Link
+        href="/acuity?report=booking-date"
+        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+      >
+        <h2 className="text-lg font-medium">Bookings by booking created month</h2>
+        <p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p>
+        <MonthlyLineChart data={bookingCreatedMonthly} color="#a78bfa" />
+      </Link>
+
+      <Link
+        href="/acuity?report=top-clients"
+        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+      >
+        <h2 className="text-lg font-medium">Top 10 clients by total bookings</h2>
+        <p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p>
+        <TopClientsChart data={topClients} />
+      </Link>
+
+      <Link
+        href="/acuity?report=calendar-month"
+        className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
+      >
+        <h2 className="text-lg font-medium">Bookings by calendar name per appointment month</h2>
+        <p className="mb-2 text-xs text-zinc-400">Monthly room/calendar booking mix.</p>
+        <CalendarMonthChart data={calendarMonthly} />
+      </Link>
+    </section>
+  );
+}
