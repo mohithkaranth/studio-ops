@@ -1,4 +1,16 @@
 import Link from "next/link";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { sql } from "@/lib/db";
 
@@ -8,158 +20,99 @@ type Point = { month_label: string; booking_count: number };
 type ClientPoint = { client_name: string; booking_count: number };
 type CalendarMonthPoint = { month_label: string; calendar_name: string; booking_count: number };
 
-type Tick = { value: number; y: number };
+type CalendarMonthChartPoint = { month_label: string; [calendar: string]: string | number };
 
 function EmptyState() {
   return <div className="flex h-72 items-center justify-center text-sm text-zinc-500">No data available for the last 12 months.</div>;
 }
 
-function buildTicks(max: number, chartTop: number, chartHeight: number): Tick[] {
-  const safeMax = Math.max(max, 1);
-  const midpoint = Math.round(safeMax / 2);
-  return [0, midpoint, safeMax].map((value) => ({ value, y: chartTop + chartHeight - (value / safeMax) * chartHeight }));
-}
-
-function LineChart({ data, color }: { data: Point[]; color: string }) {
-  if (data.length === 0) return <EmptyState />;
-  const max = Math.max(...data.map((d) => d.booking_count), 1);
-  const width = 720;
-  const height = 260;
-  const margin = { top: 20, right: 16, bottom: 60, left: 52 };
-  const innerW = width - margin.left - margin.right;
-  const innerH = height - margin.top - margin.bottom;
-  const stepX = data.length > 1 ? innerW / (data.length - 1) : innerW;
-  const ticks = buildTicks(max, margin.top, innerH);
-
-  const points = data.map((d, i) => {
-    const x = margin.left + i * stepX;
-    const y = margin.top + innerH - (d.booking_count / max) * innerH;
-    return { ...d, x, y };
-  });
-
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number; payload?: Record<string, string | number> }>; label?: string }) {
+  if (!active || !payload?.length) return null;
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full" role="img" aria-label="Line chart">
-      {ticks.map((tick) => (
-        <g key={tick.value}>
-          <line x1={margin.left} y1={tick.y} x2={width - margin.right} y2={tick.y} stroke="#27272a" strokeDasharray="4 4" />
-          <text x={margin.left - 8} y={tick.y + 4} textAnchor="end" className="fill-zinc-400 text-[11px]">{tick.value}</text>
-        </g>
-      ))}
-      <line x1={margin.left} y1={margin.top + innerH} x2={width - margin.right} y2={margin.top + innerH} stroke="#52525b" />
-      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerH} stroke="#52525b" />
-      <polyline fill="none" stroke={color} strokeWidth="3" points={points.map((p) => `${p.x},${p.y}`).join(" ")} />
-      {points.map((p) => (
-        <g key={p.month_label}>
-          <circle cx={p.x} cy={p.y} r="4" fill={color}>
-            <title>{`${p.month_label}: ${p.booking_count}`}</title>
-          </circle>
-          <text x={p.x} y={p.y - 8} textAnchor="middle" className="fill-zinc-300 text-[10px]">{p.booking_count}</text>
-          <text x={p.x} y={height - 24} textAnchor="middle" className="fill-zinc-400 text-[11px]">{p.month_label}</text>
-        </g>
-      ))}
-    </svg>
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-100 shadow-lg">
+      {label ? <p className="mb-1 text-zinc-300">{label}</p> : null}
+      <div className="space-y-0.5">
+        {payload.map((item) => (
+          <p key={item.name} className="text-zinc-200">
+            <span className="text-zinc-400">{item.name}: </span>
+            <span>{item.value ?? 0}</span>
+          </p>
+        ))}
+      </div>
+    </div>
   );
 }
 
-function VerticalBarChart({ data }: { data: ClientPoint[] }) {
+function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) {
   if (data.length === 0) return <EmptyState />;
-  const max = Math.max(...data.map((d) => d.booking_count), 1);
-  const width = 720;
-  const height = 320;
-  const margin = { top: 16, right: 16, bottom: 105, left: 52 };
-  const innerW = width - margin.left - margin.right;
-  const innerH = height - margin.top - margin.bottom;
-  const barW = Math.max(14, Math.floor(innerW / Math.max(data.length * 1.7, 1)));
-  const gap = (innerW - barW * data.length) / Math.max(data.length - 1, 1);
-  const ticks = buildTicks(max, margin.top, innerH);
+  return (
+    <div className="h-72 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis dataKey="month_label" tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <Tooltip content={<ChartTooltip />} />
+          <Line type="monotone" dataKey="booking_count" stroke={color} strokeWidth={2.5} dot={{ r: 3.5, fill: color }} activeDot={{ r: 5 }} name="Bookings" />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function truncateClient(name: string) {
+  return name.length > 18 ? `${name.slice(0, 18)}…` : name;
+}
+
+function TopClientsChart({ data }: { data: ClientPoint[] }) {
+  if (data.length === 0) return <EmptyState />;
+  const mapped = data.map((d) => ({ ...d, short_name: truncateClient(d.client_name) }));
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-80 w-full" role="img" aria-label="Bar chart">
-      {ticks.map((tick) => (
-        <g key={tick.value}>
-          <line x1={margin.left} y1={tick.y} x2={width - margin.right} y2={tick.y} stroke="#27272a" strokeDasharray="4 4" />
-          <text x={margin.left - 8} y={tick.y + 4} textAnchor="end" className="fill-zinc-400 text-[11px]">{tick.value}</text>
-        </g>
-      ))}
-      <line x1={margin.left} y1={margin.top + innerH} x2={width - margin.right} y2={margin.top + innerH} stroke="#52525b" />
-      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerH} stroke="#52525b" />
-      {data.map((d, i) => {
-        const h = (d.booking_count / max) * innerH;
-        const x = margin.left + i * (barW + gap);
-        const y = margin.top + innerH - h;
-        return (
-          <g key={d.client_name}>
-            <rect x={x} y={y} width={barW} height={h} fill="#60a5fa" rx="2">
-              <title>{`${d.client_name}: ${d.booking_count}`}</title>
-            </rect>
-            <text x={x + barW / 2} y={y - 6} textAnchor="middle" className="fill-zinc-300 text-[10px]">{d.booking_count}</text>
-            <text x={x + barW / 2} y={height - 50} textAnchor="end" transform={`rotate(-45 ${x + barW / 2} ${height - 50})`} className="fill-zinc-400 text-[10px]">{d.client_name}</text>
-          </g>
-        );
-      })}
-    </svg>
+    <div className="h-80 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={mapped} margin={{ top: 12, right: 16, left: 0, bottom: 46 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis dataKey="short_name" interval={0} angle={-30} textAnchor="end" height={56} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <Tooltip content={<ChartTooltip />} formatter={(value, _name, item) => [value, item?.payload?.client_name ?? "Bookings"]} />
+          <Bar dataKey="booking_count" fill="#60a5fa" radius={[6, 6, 0, 0]} name="Bookings" />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
 function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) {
   if (data.length === 0) return <EmptyState />;
 
-  const width = 720;
-  const height = 300;
-  const margin = { top: 28, right: 20, bottom: 75, left: 52 };
-  const innerW = width - margin.left - margin.right;
-  const innerH = height - margin.top - margin.bottom;
-
-  const months = [...new Set(data.map((d) => d.month_label))];
   const calendars = [...new Set(data.map((d) => d.calendar_name))];
-  const max = Math.max(...data.map((d) => d.booking_count), 1);
-  const ticks = buildTicks(max, margin.top, innerH);
-  const monthW = innerW / Math.max(months.length, 1);
-  const groupW = monthW * 0.8;
-  const barW = Math.max(6, groupW / Math.max(calendars.length, 1) - 4);
-  const colors = ["#22d3ee", "#f59e0b", "#a78bfa", "#34d399", "#f87171", "#60a5fa"];
-  const byKey = new Map(data.map((d) => [`${d.month_label}||${d.calendar_name}`, d.booking_count]));
+  const monthMap = new Map<string, CalendarMonthChartPoint>();
+
+  data.forEach((item) => {
+    const existing = monthMap.get(item.month_label) ?? { month_label: item.month_label };
+    existing[item.calendar_name] = item.booking_count;
+    monthMap.set(item.month_label, existing);
+  });
+
+  const rows = Array.from(monthMap.values());
+  const colors = ["#22d3ee", "#f59e0b", "#a78bfa", "#34d399", "#f87171", "#60a5fa", "#f472b6", "#c4b5fd"];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-80 w-full" role="img" aria-label="Calendar monthly bookings chart">
-      {ticks.map((tick) => (
-        <g key={tick.value}>
-          <line x1={margin.left} y1={tick.y} x2={width - margin.right} y2={tick.y} stroke="#27272a" strokeDasharray="4 4" />
-          <text x={margin.left - 8} y={tick.y + 4} textAnchor="end" className="fill-zinc-400 text-[11px]">{tick.value}</text>
-        </g>
-      ))}
-      <line x1={margin.left} y1={margin.top + innerH} x2={width - margin.right} y2={margin.top + innerH} stroke="#52525b" />
-      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerH} stroke="#52525b" />
-
-      {months.map((month, i) => {
-        const gx = margin.left + i * monthW + (monthW - groupW) / 2;
-        return (
-          <g key={month}>
-            {calendars.map((calendar, cIdx) => {
-              const value = byKey.get(`${month}||${calendar}`) ?? 0;
-              const h = (value / max) * innerH;
-              const x = gx + cIdx * (barW + 3);
-              const y = margin.top + innerH - h;
-              return (
-                <g key={`${month}-${calendar}`}>
-                  <rect x={x} y={y} width={barW} height={h} fill={colors[cIdx % colors.length]} rx="2">
-                    <title>{`${month} • ${calendar}: ${value}`}</title>
-                  </rect>
-                </g>
-              );
-            })}
-            <text x={gx + groupW / 2} y={height - 46} textAnchor="middle" className="fill-zinc-400 text-[10px]">{month}</text>
-          </g>
-        );
-      })}
-
-      {calendars.map((calendar, i) => (
-        <g key={calendar}>
-          <rect x={margin.left + i * 110} y={8} width={10} height={10} fill={colors[i % colors.length]} />
-          <text x={margin.left + i * 110 + 14} y={17} className="fill-zinc-300 text-[11px]">{calendar}</text>
-        </g>
-      ))}
-    </svg>
+    <div className="h-80 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 12, right: 16, left: 0, bottom: 20 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+          <XAxis dataKey="month_label" tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={{ stroke: "#52525b" }} tickLine={{ stroke: "#52525b" }} />
+          <Tooltip content={<ChartTooltip />} />
+          <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
+          {calendars.map((calendar, index) => (
+            <Bar key={calendar} dataKey={calendar} fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -183,19 +136,19 @@ export default async function Home() {
           <Link href="/acuity?report=appointment-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Bookings by appointment month</h2>
             <p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p>
-            <LineChart data={appointmentMonthly} color="#22d3ee" />
+            <MonthlyLineChart data={appointmentMonthly} color="#22d3ee" />
           </Link>
 
           <Link href="/acuity?report=booking-date" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Bookings by booking created month</h2>
             <p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p>
-            <LineChart data={bookingCreatedMonthly} color="#a78bfa" />
+            <MonthlyLineChart data={bookingCreatedMonthly} color="#a78bfa" />
           </Link>
 
           <Link href="/acuity?report=top-clients" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
             <h2 className="text-lg font-medium">Top 10 clients by total bookings</h2>
             <p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p>
-            <VerticalBarChart data={topClients} />
+            <TopClientsChart data={topClients} />
           </Link>
 
           <Link href="/acuity?report=calendar-month" className="rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
