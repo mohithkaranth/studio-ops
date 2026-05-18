@@ -34,8 +34,8 @@ export async function POST(request: Request) {
   await sql.begin(async (tx) => {
     if (uploadRows.length > 0) {
       const ids = uploadRows.map((row) => row.id);
-      await tx`delete from bank_transactions where upload_id = any(${tx.array(ids, "int4")})`;
-      await tx`delete from bank_statement_uploads where id = any(${tx.array(ids, "int4")})`;
+      await tx`delete from bank_transactions where upload_id = any(${tx.array(ids)})`;
+      await tx`delete from bank_statement_uploads where id = any(${tx.array(ids)})`;
     }
 
     const inserted = await tx<{ id: number }[]>`
