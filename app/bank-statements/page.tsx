@@ -78,21 +78,21 @@ export default function BankStatementsPage() {
     <div className="mx-auto w-full max-w-7xl space-y-8 px-6 py-12 sm:px-10 lg:px-12">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Upload Bank Statements</h1>
-        <p className="text-sm text-zinc-400">Upload monthly bank statement .xls files.</p>
+        <p className="text-sm text-zinc-300">Upload monthly bank statement .xls files.</p>
       </header>
 
-      <form onSubmit={onUpload} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+      <form onSubmit={onUpload} className="rounded-xl border border-zinc-700 bg-zinc-950 p-5 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input name="file" type="file" accept=".xls" className="block text-sm text-zinc-300" />
+          <input name="file" type="file" accept=".xls" className="block text-sm text-zinc-100 file:mr-4 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-zinc-100" />
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-60"
+            className="rounded-md bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-white disabled:opacity-60"
           >
             {loading ? "Uploading..." : "Upload Statement"}
           </button>
         </div>
-        {message ? <p className="mt-3 text-sm text-zinc-300">{message}</p> : null}
+        {message ? <p className="mt-3 text-sm text-zinc-100">{message}</p> : null}
       </form>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -104,10 +104,10 @@ export default function BankStatementsPage() {
         <Card title="Net Amount" value={summary?.net_amount ?? "0"} />
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+      <section className="overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-zinc-800 text-sm text-zinc-200">
-            <thead className="bg-zinc-900/80 text-xs uppercase text-zinc-400">
+          <table className="min-w-full divide-y divide-zinc-800 text-sm text-zinc-100">
+            <thead className="bg-zinc-900/80 text-xs uppercase text-zinc-300">
               <tr>
                 <th className="px-4 py-3 text-left">Date</th>
                 <th className="px-4 py-3 text-left">Value Date</th>
@@ -120,7 +120,7 @@ export default function BankStatementsPage() {
             <tbody className="divide-y divide-zinc-800">
               {transactions.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-5 text-zinc-400" colSpan={6}>No transactions uploaded yet.</td>
+                  <td className="px-4 py-5 text-zinc-300" colSpan={6}>No transactions uploaded yet.</td>
                 </tr>
               ) : (
                 transactions.map((tx, index) => (
@@ -148,8 +148,8 @@ export default function BankStatementsPage() {
 
 function Card({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-      <p className="text-xs uppercase tracking-wide text-zinc-400">{title}</p>
+    <div className="rounded-xl border border-zinc-700 bg-zinc-950 p-4">
+      <p className="text-xs uppercase tracking-wide text-zinc-300">{title}</p>
       <p className="mt-1 text-lg font-semibold text-zinc-50">{value}</p>
     </div>
   );
