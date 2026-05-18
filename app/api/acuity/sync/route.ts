@@ -268,7 +268,10 @@ async function updateSyncRun(
   `
 }
 
-async function fetchAppointmentsForDay(day: string, authHeader: string): Promise<AcuityAppointment[]> {
+async function fetchAppointmentsForDay(
+  day: string,
+  authHeader: string,
+): Promise<{ appointments: AcuityAppointment[]; isValidArray: boolean }> {
   const url = new URL(ACUITY_APPOINTMENTS_URL)
   url.searchParams.set('minDate', day)
   url.searchParams.set('maxDate', day)
@@ -295,7 +298,11 @@ async function fetchAppointmentsForDay(day: string, authHeader: string): Promise
     throw new Error(message)
   }
 
-  return Array.isArray(payload) ? (payload as AcuityAppointment[]) : []
+  if (!Array.isArray(payload)) {
+    return { appointments: [], isValidArray: false }
+  }
+
+  return { appointments: payload as AcuityAppointment[], isValidArray: true }
 }
 
 export async function GET(request: Request) {
@@ -341,12 +348,17 @@ export async function GET(request: Request) {
     const authHeader = `Basic ${Buffer.from(`${userId}:${apiKey}`).toString('base64')}`
     const days = eachUtcDay(fromDate, toDate)
     const merged = new Map<string, AcuityAppointment>()
+    const returnedAppointmentIds = new Set<string>()
 
     let recordsFetched = 0
     let recordsSkipped = 0
+    let canDeleteStaleRows = true
 
     for (const day of days) {
-      const dailyAppointments = await fetchAppointmentsForDay(day, authHeader)
+      const { appointments: dailyAppointments, isValidArray } = await fetchAppointmentsForDay(day, authHeader)
+      if (!isValidArray) {
+        canDeleteStaleRows = false
+      }
       recordsFetched += dailyAppointments.length
 
       for (const appointment of dailyAppointments) {
@@ -357,12 +369,15 @@ export async function GET(request: Request) {
           continue
         }
 
-        merged.set(String(appointmentId), appointment)
+        const normalizedAppointmentId = String(appointmentId)
+        returnedAppointmentIds.add(normalizedAppointmentId)
+        merged.set(normalizedAppointmentId, appointment)
       }
     }
 
     let recordsInserted = 0
     let recordsUpdated = 0
+    let recordsDeleted = 0
 
     for (const [appointmentId, appointment] of merged.entries()) {
       const appointmentJson = JSON.stringify(appointment)
@@ -509,6 +524,32 @@ export async function GET(request: Request) {
       }
     }
 
+    if (canDeleteStaleRows) {
+      const toExclusive = new Date(toDate)
+      toExclusive.setUTCDate(toExclusive.getUTCDate() + 1)
+      const toExclusiveYmd = formatYmd(toExclusive)
+      const returnedIds = Array.from(returnedAppointmentIds)
+
+      if (returnedIds.length === 0) {
+        const deleteRows = await sql`
+          delete from acuity_appointments
+          where appointment_datetime >= ${fromYmd}::timestamp
+            and appointment_datetime < ${toExclusiveYmd}::timestamp
+          returning acuity_appointment_id
+        `
+        recordsDeleted = deleteRows.length
+      } else {
+        const deleteRows = await sql`
+          delete from acuity_appointments
+          where appointment_datetime >= ${fromYmd}::timestamp
+            and appointment_datetime < ${toExclusiveYmd}::timestamp
+            and not (acuity_appointment_id = any(${returnedIds}::text[]))
+          returning acuity_appointment_id
+        `
+        recordsDeleted = deleteRows.length
+      }
+    }
+
     await updateSyncRun(runId, {
       status: 'success',
       recordsFetched,
@@ -526,6 +567,7 @@ export async function GET(request: Request) {
       recordsInserted,
       recordsUpdated,
       recordsSkipped,
+      recordsDeleted,
     })
   } catch (error) {
     if (runId !== null) {
