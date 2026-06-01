@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Bar,
@@ -25,6 +24,9 @@ type CalendarMonthPoint = {
 type CalendarMonthChartPoint = {
   month_label: string;
   [calendar: string]: string | number;
+};
+type ChartClickData = {
+  payload?: Record<string, unknown>;
 };
 
 function EmptyState() {
@@ -79,9 +81,9 @@ function MonthlyLineChart({
           data={data}
           margin={{ top: 10, right: 16, left: 0, bottom: 8 }}
           onClick={(state) => {
-             const monthLabel = state?.activeLabel;
+            const monthLabel = state?.activeLabel;
             if (typeof monthLabel !== "string" || !onMonthClick) return;
-  onMonthClick(monthLabel);
+            onMonthClick(monthLabel);
           }}
           className={onMonthClick ? "cursor-pointer" : ""}
         >
@@ -121,7 +123,13 @@ function MonthlyLineChart({
 const truncateClient = (name: string) =>
   name.length > 18 ? `${name.slice(0, 18)}…` : name;
 
-function TopClientsChart({ data }: { data: ClientPoint[] }) {
+function TopClientsChart({
+  data,
+  onClientClick,
+}: {
+  data: ClientPoint[];
+  onClientClick?: (clientName: string) => void;
+}) {
   if (data.length === 0) return <EmptyState />;
 
   const mapped = data.map((d) => ({ ...d, short_name: truncateClient(d.client_name) }));
@@ -152,14 +160,31 @@ function TopClientsChart({ data }: { data: ClientPoint[] }) {
             formatter={(value) => [value, "Bookings"]}
             labelFormatter={(_, payload) => payload?.[0]?.payload?.client_name ?? "Client"}
           />
-          <Bar dataKey="booking_count" fill="#60a5fa" radius={[6, 6, 0, 0]} name="Bookings" />
+          <Bar
+            dataKey="booking_count"
+            fill="#60a5fa"
+            radius={[6, 6, 0, 0]}
+            name="Bookings"
+            onClick={(entry) => {
+              const clientName = (entry as ChartClickData).payload?.client_name;
+              if (typeof clientName !== "string" || !onClientClick) return;
+              onClientClick(clientName);
+            }}
+            className={onClientClick ? "cursor-pointer" : ""}
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) {
+function CalendarMonthChart({
+  data,
+  onCalendarMonthClick,
+}: {
+  data: CalendarMonthPoint[];
+  onCalendarMonthClick?: (monthLabel: string, calendarName: string) => void;
+}) {
   if (data.length === 0) return <EmptyState />;
 
   const calendars = [...new Set(data.map((d) => d.calendar_name))];
@@ -207,7 +232,18 @@ function CalendarMonthChart({ data }: { data: CalendarMonthPoint[] }) {
           <Tooltip content={<ChartTooltip />} />
           <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
           {calendars.map((calendar, index) => (
-            <Bar key={calendar} dataKey={calendar} fill={colors[index % colors.length]} radius={[4, 4, 0, 0]} />
+            <Bar
+              key={calendar}
+              dataKey={calendar}
+              fill={colors[index % colors.length]}
+              radius={[4, 4, 0, 0]}
+              onClick={(entry) => {
+                const monthLabel = (entry as ChartClickData).payload?.month_label;
+                if (typeof monthLabel !== "string" || !onCalendarMonthClick) return;
+                onCalendarMonthClick(monthLabel, calendar);
+              }}
+              className={onCalendarMonthClick ? "cursor-pointer" : ""}
+            />
           ))}
         </BarChart>
       </ResponsiveContainer>
@@ -244,32 +280,51 @@ export default function AcuityDashboardCharts({
         />
       </section>
 
-      <Link
-        href="/acuity?report=booking-date"
-        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
-      >
+      <section className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
         <h2 className="text-lg font-medium">Bookings by booking created month</h2>
-        <p className="mb-2 text-xs text-zinc-400">When customers created their bookings.</p>
-        <MonthlyLineChart data={bookingCreatedMonthly} color="#a78bfa" />
-      </Link>
+        <p className="mb-2 text-xs text-zinc-400">
+          When customers created their bookings. Click a month to view records.
+        </p>
+        <MonthlyLineChart
+          data={bookingCreatedMonthly}
+          color="#a78bfa"
+          onMonthClick={(monthLabel) => {
+            router.push(
+              `/acuity/dashboard/booking-created-month?month=${encodeURIComponent(monthLabel)}`,
+            );
+          }}
+        />
+      </section>
 
-      <Link
-        href="/acuity?report=top-clients"
-        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
-      >
+      <section className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
         <h2 className="text-lg font-medium">Top 10 clients by total bookings</h2>
-        <p className="mb-2 text-xs text-zinc-400">Highest frequency clients in the last 12 months.</p>
-        <TopClientsChart data={topClients} />
-      </Link>
+        <p className="mb-2 text-xs text-zinc-400">
+          Highest frequency clients in the last 12 months. Click a client to view records.
+        </p>
+        <TopClientsChart
+          data={topClients}
+          onClientClick={(clientName) => {
+            router.push(`/acuity/dashboard/client-bookings?client=${encodeURIComponent(clientName)}`);
+          }}
+        />
+      </section>
 
-      <Link
-        href="/acuity?report=calendar-month"
-        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
-      >
+      <section className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
         <h2 className="text-lg font-medium">Bookings by calendar name per appointment month</h2>
-        <p className="mb-2 text-xs text-zinc-400">Monthly room/calendar booking mix.</p>
-        <CalendarMonthChart data={calendarMonthly} />
-      </Link>
+        <p className="mb-2 text-xs text-zinc-400">
+          Monthly room/calendar booking mix. Click a calendar segment to view records.
+        </p>
+        <CalendarMonthChart
+          data={calendarMonthly}
+          onCalendarMonthClick={(monthLabel, calendarName) => {
+            router.push(
+              `/acuity/dashboard/calendar-month?month=${encodeURIComponent(
+                monthLabel,
+              )}&calendar=${encodeURIComponent(calendarName)}`,
+            );
+          }}
+        />
+      </section>
     </section>
   );
 }
