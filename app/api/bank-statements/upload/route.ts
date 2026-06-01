@@ -65,6 +65,20 @@ function parseDate(value: unknown): string | null {
   return `${year}-${month}-${day.padStart(2, "0")}`;
 }
 
+function getMonthStart(dateText: string): string {
+  return `${dateText.slice(0, 7)}-01`;
+}
+
+function getNextMonthStart(dateText: string): string {
+  const year = Number(dateText.slice(0, 4));
+  const month = Number(dateText.slice(5, 7));
+
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+}
+
 function hashText(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -198,10 +212,8 @@ function parseWorkbook(buffer: Buffer) {
     }
 
     const valueDate = parseDate(row[valueDateIndex]);
-
     const description1 = cleanCell(row[desc1Index]) || null;
     const description2 = cleanCell(row[desc2Index]) || null;
-
     const debit = parseAmount(row[debitIndex]);
     const credit = parseAmount(row[creditIndex]);
     const runningBalance = parseAmount(row[runningBalanceIndex]);
@@ -269,10 +281,7 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: "No file uploaded." },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "No file uploaded." }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
@@ -281,6 +290,16 @@ export async function POST(request: Request) {
 
     const parsed = parseWorkbook(buffer);
 
+    if (!parsed.account_number) {
+      return NextResponse.json(
+        { error: "Account number not found in statement." },
+        { status: 400 },
+      );
+    }
+
+    const statementMonthStart = getMonthStart(parsed.statement_start_date);
+    const nextMonthStart = getNextMonthStart(parsed.statement_start_date);
+
     const result = await sql.begin(async (tx) => {
       await tx`
         delete from bank_transactions
@@ -288,16 +307,16 @@ export async function POST(request: Request) {
           select id
           from bank_statement_uploads
           where account_number = ${parsed.account_number}
-            and statement_start_date = ${parsed.statement_start_date}
-            and statement_end_date = ${parsed.statement_end_date}
+            and statement_start_date < ${nextMonthStart}
+            and statement_end_date >= ${statementMonthStart}
         )
       `;
 
       await tx`
         delete from bank_statement_uploads
         where account_number = ${parsed.account_number}
-          and statement_start_date = ${parsed.statement_start_date}
-          and statement_end_date = ${parsed.statement_end_date}
+          and statement_start_date < ${nextMonthStart}
+          and statement_end_date >= ${statementMonthStart}
       `;
 
       const insertedUploads = await tx<{ id: number }[]>`
@@ -373,6 +392,8 @@ export async function POST(request: Request) {
         accountNumber: parsed.account_number,
         statementStartDate: parsed.statement_start_date,
         statementEndDate: parsed.statement_end_date,
+        replacedMonthStart: statementMonthStart,
+        replacedMonthEndExclusive: nextMonthStart,
       };
     });
 
