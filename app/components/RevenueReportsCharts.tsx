@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   Bar,
   BarChart,
@@ -31,7 +32,7 @@ const sgdFormatter = new Intl.NumberFormat("en-SG", {
 function EmptyChartState() {
   return (
     <div className="flex h-72 min-w-0 items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 px-4 text-center text-sm text-zinc-500">
-      No bank transaction data available yet. Upload bank statements to populate revenue reports.
+      No bank transaction data available yet.
     </div>
   );
 }
@@ -48,13 +49,13 @@ function CurrencyTooltip({
   if (!active || !payload?.length) return null;
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs text-zinc-100 shadow-lg">
-      {label ? <p className="mb-1 text-zinc-300">{label}</p> : null}
-      <div className="space-y-0.5">
+    <div className="rounded-lg border border-zinc-700 bg-zinc-950/95 px-3 py-2 text-xs text-zinc-100 shadow-xl">
+      {label ? <p className="mb-1 font-medium text-zinc-200">{label}</p> : null}
+      <div className="space-y-1">
         {payload.map((item) => (
-          <p key={item.name} className="text-zinc-200">
-            <span className="text-zinc-400">{item.name}: </span>
-            <span>{sgdFormatter.format(item.value ?? 0)}</span>
+          <p key={item.name} className="text-zinc-300">
+            <span className="text-zinc-500">{item.name}: </span>
+            <span className="text-zinc-100">{sgdFormatter.format(item.value ?? 0)}</span>
           </p>
         ))}
       </div>
@@ -80,28 +81,29 @@ function MonthlyBarChart({
   if (data.length === 0) return <EmptyChartState />;
 
   return (
-    <div className="h-80 min-w-0 w-full">
-      <ResponsiveContainer width="100%" height={320} minWidth={0}>
-        <BarChart data={data} margin={{ top: 12, right: 16, left: 20, bottom: 26 }}>
-          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+    <div className="h-72 min-w-0 w-full">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <BarChart data={data} margin={{ top: 12, right: 16, left: 16, bottom: 24 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" vertical />
           <XAxis
             dataKey="month_label"
             interval={0}
             angle={-35}
             textAnchor="end"
-            height={68}
+            height={62}
             tick={{ fill: "#a1a1aa", fontSize: 11 }}
-            axisLine={{ stroke: "#52525b" }}
-            tickLine={{ stroke: "#52525b" }}
+            axisLine={{ stroke: "#3f3f46" }}
+            tickLine={{ stroke: "#3f3f46" }}
           />
           <YAxis
             tickFormatter={currencyTick}
             tick={{ fill: "#a1a1aa", fontSize: 11 }}
-            axisLine={{ stroke: "#52525b" }}
-            tickLine={{ stroke: "#52525b" }}
+            axisLine={{ stroke: "#3f3f46" }}
+            tickLine={{ stroke: "#3f3f46" }}
+            width={72}
           />
-          <Tooltip content={<CurrencyTooltip />} />
-          <Bar dataKey={dataKey} fill={fill} radius={[6, 6, 0, 0]} name={name} />
+          <Tooltip content={<CurrencyTooltip />} cursor={{ fill: "rgba(63, 63, 70, 0.22)" }} />
+          <Bar dataKey={dataKey} fill={fill} radius={[5, 5, 0, 0]} name={name} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -113,29 +115,30 @@ function RevenueVsExpenseChart({ data }: { data: RevenueReportPoint[] }) {
 
   return (
     <div className="h-80 min-w-0 w-full">
-      <ResponsiveContainer width="100%" height={320} minWidth={0}>
-        <BarChart data={data} margin={{ top: 12, right: 16, left: 20, bottom: 26 }}>
-          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
+      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <BarChart data={data} margin={{ top: 12, right: 16, left: 16, bottom: 24 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 4" vertical />
           <XAxis
             dataKey="month_label"
             interval={0}
             angle={-35}
             textAnchor="end"
-            height={68}
+            height={62}
             tick={{ fill: "#a1a1aa", fontSize: 11 }}
-            axisLine={{ stroke: "#52525b" }}
-            tickLine={{ stroke: "#52525b" }}
+            axisLine={{ stroke: "#3f3f46" }}
+            tickLine={{ stroke: "#3f3f46" }}
           />
           <YAxis
             tickFormatter={currencyTick}
             tick={{ fill: "#a1a1aa", fontSize: 11 }}
-            axisLine={{ stroke: "#52525b" }}
-            tickLine={{ stroke: "#52525b" }}
+            axisLine={{ stroke: "#3f3f46" }}
+            tickLine={{ stroke: "#3f3f46" }}
+            width={72}
           />
-          <Tooltip content={<CurrencyTooltip />} />
+          <Tooltip content={<CurrencyTooltip />} cursor={{ fill: "rgba(63, 63, 70, 0.22)" }} />
           <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
-          <Bar dataKey="revenue" fill="#34d399" radius={[4, 4, 0, 0]} name="Revenue" />
-          <Bar dataKey="expenses" fill="#f87171" radius={[4, 4, 0, 0]} name="Expenses" />
+          <Bar dataKey="revenue" fill="#06b6d4" radius={[4, 4, 0, 0]} name="Revenue" />
+          <Bar dataKey="expenses" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Expenses" />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -149,12 +152,12 @@ function ChartCard({
 }: {
   title: string;
   description: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+    <section className="min-w-0 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
       <h2 className="text-lg font-medium text-zinc-50">{title}</h2>
-      <p className="mb-2 text-xs text-zinc-400">{description}</p>
+      <p className="mb-3 text-xs text-zinc-400">{description}</p>
       {children}
     </section>
   );
@@ -164,15 +167,18 @@ export default function RevenueReportsCharts({ data }: { data: RevenueReportPoin
   return (
     <section className="grid gap-6 xl:grid-cols-2">
       <ChartCard title="Revenue by month" description="Monthly sum of credited bank transactions.">
-        <MonthlyBarChart data={data} dataKey="revenue" fill="#34d399" name="Revenue" />
+        <MonthlyBarChart data={data} dataKey="revenue" fill="#06b6d4" name="Revenue" />
       </ChartCard>
 
       <ChartCard title="Expense by month" description="Monthly sum of debited bank transactions.">
-        <MonthlyBarChart data={data} dataKey="expenses" fill="#f87171" name="Expenses" />
+        <MonthlyBarChart data={data} dataKey="expenses" fill="#f59e0b" name="Expenses" />
       </ChartCard>
 
       <div className="xl:col-span-2">
-        <ChartCard title="Revenue vs Expense by month" description="Monthly credited and debited bank transaction totals side by side.">
+        <ChartCard
+          title="Revenue vs Expense by month"
+          description="Monthly credited and debited bank transaction totals side by side."
+        >
           <RevenueVsExpenseChart data={data} />
         </ChartCard>
       </div>
