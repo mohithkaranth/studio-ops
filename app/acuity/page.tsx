@@ -1,5 +1,7 @@
 import { sql } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 const ACUITY_APPOINTMENTS_URL = "https://acuityscheduling.com/api/v1/appointments";
 
 type AcuityAppointment = {

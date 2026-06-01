@@ -2,6 +2,8 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { sql } from '@/lib/db'
 
+export const dynamic = "force-dynamic";
+
 type DateLike = string | Date | null | undefined
 type LastSyncRun = { id:number; status:string; from_date:DateLike; to_date:DateLike; records_fetched:number|null; records_inserted:number|null; records_updated:number|null; records_skipped?:number|null; finished_at:DateLike; error_message:string|null }
 type SummaryCounts = { total_appointments:number; total_clients:number; appointments_without_client:number; upcoming_appointments:number; cancelled_appointments:number }
