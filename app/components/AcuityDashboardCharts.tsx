@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Bar,
   BarChart,
@@ -60,13 +61,30 @@ function ChartTooltip({
   );
 }
 
-function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) {
+function MonthlyLineChart({
+  data,
+  color,
+  onMonthClick,
+}: {
+  data: Point[];
+  color: string;
+  onMonthClick?: (monthLabel: string) => void;
+}) {
   if (data.length === 0) return <EmptyState />;
 
   return (
     <div className="h-72 min-w-0 w-full">
       <ResponsiveContainer width="100%" height={288} minWidth={0}>
-        <LineChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+        <LineChart
+          data={data}
+          margin={{ top: 10, right: 16, left: 0, bottom: 8 }}
+          onClick={(state) => {
+             const monthLabel = state?.activeLabel;
+            if (typeof monthLabel !== "string" || !onMonthClick) return;
+  onMonthClick(monthLabel);
+          }}
+          className={onMonthClick ? "cursor-pointer" : ""}
+        >
           <CartesianGrid stroke="#27272a" strokeDasharray="3 4" />
           <XAxis
             dataKey="month_label"
@@ -90,8 +108,8 @@ function MonthlyLineChart({ data, color }: { data: Point[]; color: string }) {
             dataKey="booking_count"
             stroke={color}
             strokeWidth={2.5}
-            dot={{ r: 3.5, fill: color }}
-            activeDot={{ r: 5 }}
+            dot={{ r: 3.5, fill: color, cursor: onMonthClick ? "pointer" : "default" }}
+            activeDot={{ r: 6, cursor: onMonthClick ? "pointer" : "default" }}
             name="Bookings"
           />
         </LineChart>
@@ -208,16 +226,23 @@ export default function AcuityDashboardCharts({
   topClients: ClientPoint[];
   calendarMonthly: CalendarMonthPoint[];
 }) {
+  const router = useRouter();
+
   return (
     <section className="grid gap-6 md:grid-cols-2">
-      <Link
-        href="/acuity?report=appointment-date"
-        className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90"
-      >
+      <section className="block min-w-0 rounded-2xl border border-zinc-800/90 bg-zinc-900/70 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:border-zinc-700 hover:bg-zinc-900/90">
         <h2 className="text-lg font-medium">Bookings by appointment month</h2>
-        <p className="mb-2 text-xs text-zinc-400">When booked sessions are scheduled to happen.</p>
-        <MonthlyLineChart data={appointmentMonthly} color="#22d3ee" />
-      </Link>
+        <p className="mb-2 text-xs text-zinc-400">
+          When booked sessions are scheduled to happen. Click a month to view records.
+        </p>
+        <MonthlyLineChart
+          data={appointmentMonthly}
+          color="#22d3ee"
+          onMonthClick={(monthLabel) => {
+            router.push(`/acuity/dashboard/appointment-month?month=${encodeURIComponent(monthLabel)}`);
+          }}
+        />
+      </section>
 
       <Link
         href="/acuity?report=booking-date"
