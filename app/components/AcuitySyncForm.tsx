@@ -28,15 +28,25 @@ function formatYmd(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
-function buildLastSixMonths(today: Date): SyncRow[] {
+function buildPreviousCurrentAndNextTwoMonths(today: Date): SyncRow[] {
   const ranges: SyncRow[] = []
 
-  for (let offset = 5; offset >= 0; offset -= 1) {
-    const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - offset, 1))
-    const monthEnd =
-      offset === 0
-        ? today
-        : new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0))
+  const startMonth = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1),
+  )
+
+  for (let index = 0; index < 4; index += 1) {
+    const monthStart = new Date(
+      Date.UTC(
+        startMonth.getUTCFullYear(),
+        startMonth.getUTCMonth() + index,
+        1,
+      ),
+    )
+
+    const monthEnd = new Date(
+      Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0),
+    )
 
     ranges.push({
       id: `${formatYmd(monthStart)}_${formatYmd(monthEnd)}`,
@@ -52,24 +62,33 @@ function buildLastSixMonths(today: Date): SyncRow[] {
 }
 
 export default function AcuitySyncForm() {
-  const initialRows = useMemo(() => buildLastSixMonths(new Date()), [])
+  const initialRows = useMemo(() => buildPreviousCurrentAndNextTwoMonths(new Date()), [])
   const [rows, setRows] = useState<SyncRow[]>(initialRows)
   const [isSyncing, setIsSyncing] = useState(false)
   const [finalMessage, setFinalMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const syncLastSixMonths = async () => {
+  const syncPreviousCurrentAndNextTwoMonths = async () => {
     setIsSyncing(true)
     setFinalMessage(null)
     setErrorMessage(null)
-    setRows((prev) => prev.map((row) => ({ ...row, status: 'Pending', result: null, error: null })))
+    setRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        status: 'Pending',
+        result: null,
+        error: null,
+      })),
+    )
 
     try {
       for (let i = 0; i < initialRows.length; i += 1) {
         const range = initialRows[i]
 
         setRows((prev) =>
-          prev.map((row, index) => (index === i ? { ...row, status: 'Syncing', error: null } : row)),
+          prev.map((row, index) =>
+            index === i ? { ...row, status: 'Syncing', error: null } : row,
+          ),
         )
 
         const response = await fetch(`/api/acuity/sync?from=${range.from}&to=${range.to}`, {
@@ -84,7 +103,9 @@ export default function AcuitySyncForm() {
 
           setRows((prev) =>
             prev.map((row, index) =>
-              index === i ? { ...row, status: 'Failed', error: message, result: payload } : row,
+              index === i
+                ? { ...row, status: 'Failed', error: message, result: payload }
+                : row,
             ),
           )
 
@@ -92,11 +113,15 @@ export default function AcuitySyncForm() {
         }
 
         setRows((prev) =>
-          prev.map((row, index) => (index === i ? { ...row, status: 'Done', result: payload, error: null } : row)),
+          prev.map((row, index) =>
+            index === i
+              ? { ...row, status: 'Done', result: payload, error: null }
+              : row,
+          ),
         )
       }
 
-      setFinalMessage('Success: all 6 monthly syncs completed.')
+      setFinalMessage('Success: previous month, current month, and next 2 months synced.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'An unknown sync error occurred.')
     } finally {
@@ -108,11 +133,11 @@ export default function AcuitySyncForm() {
     <div className="space-y-6">
       <button
         type="button"
-        onClick={syncLastSixMonths}
+        onClick={syncPreviousCurrentAndNextTwoMonths}
         disabled={isSyncing}
         className="inline-flex items-center rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isSyncing ? 'Syncing...' : 'Sync Last 6 Months'}
+        {isSyncing ? 'Syncing...' : 'Sync Previous, Current & Next 2 Months'}
       </button>
 
       <div className="overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900/50">
