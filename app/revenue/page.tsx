@@ -45,6 +45,8 @@ export default async function RevenuePage() {
       SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement,
       COUNT(*) AS transaction_count
     FROM bank_transactions
+    WHERE transaction_date >= date_trunc('month', current_date) - interval '11 months'
+      AND transaction_date < date_trunc('month', current_date) + interval '1 month'
     GROUP BY date_trunc('month', transaction_date)
     ORDER BY month_start ASC;
   `;
