@@ -1,4 +1,5 @@
 import { isComparisonQuery, type ComparisonQuery, type SemanticQuery, type SemanticQueryPayload } from "./semantic-query";
+import { sortAggregateRows } from "./dimension-utils";
 import { buildAggregateQuery, buildBankRowSummaryQuery, buildRowsQuery } from "./sql-builder";
 
 export type ShapedResult = {
@@ -20,11 +21,13 @@ const COMPARISON_METRIC_ALIASES: Record<string, string> = {
 export async function executeSemanticQuery(query: SemanticQueryPayload): Promise<ShapedResult> {
   if (isComparisonQuery(query)) return executeComparisonQuery(query);
   if (query.resultMode === "aggregate_only") {
-    return { mode: query.resultMode, aggregateRows: await buildAggregateQuery(query) };
+    const aggregateRows = await buildAggregateQuery(query);
+    return { mode: query.resultMode, aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []) };
   }
   if (!query.rowLimit) throw new Error("Row result modes require a normalized rowLimit");
   if (query.domain !== "bank") {
-    return { mode: "aggregate_only", aggregateRows: await buildAggregateQuery({ ...query, resultMode: "aggregate_only", rowLimit: 0 }) };
+    const aggregateRows = await buildAggregateQuery({ ...query, resultMode: "aggregate_only", rowLimit: 0 });
+    return { mode: "aggregate_only", aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []) };
   }
   const [rows, summaryRows] = await Promise.all([buildRowsQuery(query), buildBankRowSummaryQuery(query)]);
   return { mode: query.resultMode, rows, summaryRows };
@@ -53,7 +56,7 @@ function mergeComparisonRows(query: ComparisonQuery, childRows: Record<string, u
   const rows = [...rowsByKey.values()];
   const metricAliases = [...new Set(query.queries.flatMap((child) => child.metrics.map((metric) => COMPARISON_METRIC_ALIASES[metric] ?? metric)))];
   rows.forEach((row) => metricAliases.forEach((alias) => { row[alias] ??= 0; }));
-  return rows.sort((a, b) => dimensions.map((dimension) => String(a[dimension] ?? "").localeCompare(String(b[dimension] ?? ""))).find((result) => result !== 0) ?? 0);
+  return sortAggregateRows(rows, dimensions);
 }
 
 function comparisonDimensions(query: ComparisonQuery): ("month" | "year")[] {
