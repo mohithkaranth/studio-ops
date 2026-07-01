@@ -6,6 +6,7 @@ type ChatRequest = { question?: unknown };
 type IntentKind =
   | "bank_credits"
   | "bank_debits"
+  | "bank_movement_summary"
   | "acuity_booking_count"
   | "acuity_booking_by_room_type"
   | "monthly_summary";
@@ -112,14 +113,14 @@ Allowed data sources and fields:
 - bank_transactions: transaction_date, description_1, description_2, debit, credit.
 - acuity_appointments: appointment_datetime, created_datetime, calendar_name, canceled, price.
 Definitions: bank revenue is sum of bank credits; bank expenses are sum of bank debits; Acuity appointment value is sum of appointment price; bookings are count of non-cancelled Acuity appointments; room type is calendar_name; payments from a person/source are bank credits where description_1 or description_2 contains the search text.
-Supported intents: bank_credits, bank_debits, acuity_booking_count, acuity_booking_by_room_type, monthly_summary.
+Supported intents: bank_credits, bank_debits, bank_movement_summary, acuity_booking_count, acuity_booking_by_room_type, monthly_summary.
 Return one JSON object. Never write SQL. Clarify only when a missing choice changes the result.
 Distinguish date basis, grouping dimension, and metric source. "By appointment date" sets dateBasis to appointment_datetime, not groupBy. "By booking created date" sets dateBasis to created_datetime. "By calendar name" and "by room type" set groupBy to calendar_name.
 Revenue rules: if the user says bank revenue, use bank_revenue; if the user says Acuity revenue, Acuity appointment value, or appointment value, use acuity_value; if the user says both revenue types, use both. Ask revenue clarification only for unsourced "revenue".
 Booking rules: default dateBasis to appointment_datetime. Clarify booking date basis only when the user asks to compare/group bookings by date but does not say appointment date or booking created date. Booking counts default to non-cancelled Acuity appointments.
 Mixed monthly summaries: expenses are bank debits; bank revenue is bank credits; bookings are Acuity counts. If grouped by calendar_name/room type, grouping applies only to Acuity booking counts unless explicit reconciliation data exists; do not allocate bank revenue or expenses by calendar_name.
-If a month is given without a year, ask which year.
-Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
+If a month is given without a year, ask which year. Treat year phrases like "in the year 2026", "for 2026", "during 2026", and "2026 total" as an explicit dateRange from 2026-01-01 to exclusive 2027-01-01. If users ask for total debit and credit / credits and debits / expenses and revenue, use bank_movement_summary with mode total so both sides and net movement are returned, not transaction rows.
+Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|bank_movement_summary|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
 
 const MONTHS: Record<string, number> = {
   january: 1,
@@ -159,6 +160,7 @@ function parseFastPathIntent(question: string): ModelOutput | null {
   const unsourcedRevenue = /\brevenues?\b/.test(normalized) && !revenueMetric && !/\bbank revenue\b/.test(normalized);
   const dateBasis = detectAcuityDateBasis(question);
   const groupBy = detectGrouping(question);
+  const wantsTotalSummary = /\b(how much total|total|summary|summar(?:y|ise|ize))\b/.test(normalized);
 
   if (hasMonthWithoutYear(normalized)) {
     return { type: "clarification", question: "Which month and year should I use?" };
@@ -171,12 +173,28 @@ function parseFastPathIntent(question: string): ModelOutput | null {
     return {
       type: "intent",
       intent: groupBy ? "acuity_booking_by_room_type" : "acuity_booking_count",
-      mode: /\b(show|list)\b/.test(normalized) ? "list" : "total",
+      mode: /\b(show|list)\b/.test(normalized) && !wantsTotalSummary ? "list" : "total",
       dateRange,
       groupBy,
       dateBasis: dateBasis ?? "appointment_datetime",
       searchText: null,
       revenueMetric: null,
+    };
+  }
+
+  const bankSummaryMetricCount = [mentionsDebits, mentionsCredits || revenueMetric === "bank_revenue"].filter(Boolean).length;
+
+  if (hasDate && bankSummaryMetricCount >= 2 && !mentionsBookings) {
+    return {
+      type: "intent",
+      intent: "bank_movement_summary",
+      mode: "total",
+      dateRange,
+      groupBy: null,
+      dateBasis: null,
+      searchText: null,
+      includeAcuityValue: false,
+      revenueMetric: "bank_revenue",
     };
   }
 
@@ -202,7 +220,7 @@ function parseFastPathIntent(question: string): ModelOutput | null {
     return {
       type: "intent",
       intent: "bank_credits",
-      mode: /\b(show|list|tell me)\b/.test(normalized) ? "list" : "total",
+      mode: /\b(show|list|tell me)\b/.test(normalized) && !wantsTotalSummary ? "list" : "total",
       dateRange,
       searchText: extractBankSearchText(question, "credit"),
       groupBy: null,
@@ -239,17 +257,24 @@ function parseFastPathDateRange(question: string): DateRange | null {
   const monthYear = question.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})\b/);
   if (monthYear) return { type: "month", month: MONTHS[monthYear[1]], year: Number(monthYear[2]) };
 
+  const yearOnly = question.match(/\b(?:in(?:\s+the\s+year)?|for|during)\s+(20\d{2})\b|\b(20\d{2})\s+total\b/);
+  if (yearOnly) return yearRange(Number(yearOnly[1] ?? yearOnly[2]));
+
   const now = new Date();
   if (/\bthis month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth());
   if (/\blast month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth() - 1);
-  if (/\bthis year\b/.test(question)) return { type: "explicit", start: isoDate(new Date(Date.UTC(now.getUTCFullYear(), 0, 1))), end: isoDate(new Date(Date.UTC(now.getUTCFullYear(), 11, 31))) };
+  if (/\bthis year\b/.test(question)) return yearRange(now.getUTCFullYear());
   return null;
 }
 
 function monthRange(year: number, zeroBasedMonth: number): DateRange {
   const start = new Date(Date.UTC(year, zeroBasedMonth, 1));
-  const end = new Date(Date.UTC(year, zeroBasedMonth + 1, 0));
+  const end = new Date(Date.UTC(year, zeroBasedMonth + 1, 1));
   return { type: "explicit", start: isoDate(start), end: isoDate(end) };
+}
+
+function yearRange(year: number): DateRange {
+  return { type: "explicit", start: `${year}-01-01`, end: `${year + 1}-01-01` };
 }
 
 function isoDate(date: Date) {
@@ -264,7 +289,7 @@ function extractBankSearchText(question: string, kind: "credit" | "debit") {
   if (source && !/^(may|june?|july?|jan|feb|mar|apr|aug|sep|oct|nov|dec)\b/i.test(source)) return source;
 
   const beforeMetric = question.match(new RegExp(`\\\\b(?:show|list|total|how many|how much)\\\\s+(.+?)\\\\s+(?:${kind === "credit" ? "credits?|payments?|bank revenue" : "debits?|expenses?"})\\\\b`, "i"))?.[1]?.trim();
-  if (beforeMetric && !/^(bank|the|me)$/i.test(beforeMetric)) return beforeMetric;
+  if (beforeMetric && !/^(bank|the|me)$/i.test(beforeMetric)) return beforeMetric.replace(/^(all|the)\s+/i, "");
   return null;
 }
 
@@ -275,6 +300,14 @@ function normalizeModelOutput(output: ModelOutput, question: string): ModelOutpu
   const source = detectRevenueMetric(question);
   const dateBasis = detectAcuityDateBasis(question);
   const groupBy = detectGrouping(question);
+  const parsedDateRange = parseFastPathDateRange(question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim());
+
+  if (parsedDateRange) normalized.dateRange = parsedDateRange;
+  if (/\b(debits?|expenses?)\b/i.test(question) && /\b(credits?|bank revenue|payments?)\b/i.test(question) && !/\b(bookings?|appointments?|acuity)\b/i.test(question)) {
+    normalized.intent = "bank_movement_summary";
+    normalized.mode = "total";
+    normalized.searchText = null;
+  }
 
   if (source) normalized.revenueMetric = source;
   if (dateBasis) normalized.dateBasis = dateBasis;
@@ -326,7 +359,7 @@ function getAcuityDateColumn(dateBasis: Intent["dateBasis"] | undefined | null) 
 }
 
 function validateIntent(intent: Intent, question = ""): Clarification | null {
-  const allowed = new Set<IntentKind>(["bank_credits", "bank_debits", "acuity_booking_count", "acuity_booking_by_room_type", "monthly_summary"]);
+  const allowed = new Set<IntentKind>(["bank_credits", "bank_debits", "bank_movement_summary", "acuity_booking_count", "acuity_booking_by_room_type", "monthly_summary"]);
   if (intent.type !== "intent" || !allowed.has(intent.intent)) {
     return { type: "clarification", question: "I can answer bank credit/debit, booking count, room type, and monthly summary questions. Which one do you want?" };
   }
@@ -358,14 +391,15 @@ function getDateSql(range: DateRange | null | undefined, column: any) {
   if (!range) return sql``;
   if (range.type === "last_months") return sql`and ${column} >= date_trunc('month', current_date) - (${range.months - 1} * interval '1 month') and ${column} < current_date + interval '1 day'`;
   if (range.type === "month") return sql`and ${column} >= make_date(${range.year}, ${range.month}, 1) and ${column} < make_date(${range.year}, ${range.month}, 1) + interval '1 month'`;
-  return sql`and ${column} >= ${range.start}::date and ${column} < ${range.end}::date + interval '1 day'`;
+  return sql`and ${column} >= ${range.start}::date and ${column} < ${range.end}::date`;
 }
 
 function dateLabel(range?: DateRange | null) {
   if (!range) return "all time";
   if (range.type === "last_months") return `the past ${range.months} month${range.months === 1 ? "" : "s"}`;
   if (range.type === "month") return `${range.year}-${String(range.month).padStart(2, "0")}`;
-  return `${range.start} to ${range.end}`;
+  if (/^\d{4}-01-01$/.test(range.start) && range.end === `${Number(range.start.slice(0, 4)) + 1}-01-01`) return range.start.slice(0, 4);
+  return `${range.start} to ${range.end} (exclusive)`;
 }
 
 function logStudioChat({
@@ -401,6 +435,7 @@ async function runApprovedQuery(intent: Intent): Promise<QueryResult> {
   switch (intent.intent) {
     case "bank_credits": return runBank(intent, "credit");
     case "bank_debits": return runBank(intent, "debit");
+    case "bank_movement_summary": return runBankMovementSummary(intent);
     case "acuity_booking_count": return runBookingCount(intent);
     case "acuity_booking_by_room_type": return runBookingsByRoom(intent);
     case "monthly_summary": return runMonthlySummary(intent);
@@ -429,6 +464,40 @@ async function runBank(intent: Intent, kind: "credit" | "debit"): Promise<QueryR
   const total = Number(totals[0]?.total ?? 0);
   const label = kind === "credit" ? "credits" : "debits";
   return { answer: `I found ${totals[0]?.count ?? 0} bank ${label}${search ? ` matching “${search}”` : ""} for ${dateLabel(intent.dateRange)}, totaling ${money.format(total)}.`, columns: ["transaction_date", "description_1", "description_2", kind], rows };
+}
+
+async function runBankMovementSummary(intent: Intent): Promise<QueryResult> {
+  const dateFilter = getDateSql(intent.dateRange, sql`transaction_date`);
+  const totals = await sql<{ bank_credits: string | null; bank_debits: string | null; net_movement: string | null }[]>`
+    select
+      coalesce(sum(credit), 0)::text as bank_credits,
+      coalesce(sum(debit), 0)::text as bank_debits,
+      (coalesce(sum(credit), 0) - coalesce(sum(debit), 0))::text as net_movement
+    from bank_transactions
+    where transaction_date is not null
+      ${dateFilter}
+  `;
+  const row = totals[0] ?? { bank_credits: "0", bank_debits: "0", net_movement: "0" };
+  const label = summaryPeriodLabel(intent.dateRange);
+  const rows = [{
+    [label.column]: label.value,
+    bank_credits: row.bank_credits ?? "0",
+    bank_debits: row.bank_debits ?? "0",
+    net_movement: row.net_movement ?? "0",
+  }];
+  return {
+    answer: `For ${label.value}, total bank credits were ${money.format(Number(row.bank_credits ?? 0))}, total bank debits were ${money.format(Number(row.bank_debits ?? 0))}, net movement was ${money.format(Number(row.net_movement ?? 0))}.`,
+    columns: [label.column, "bank_credits", "bank_debits", "net_movement"],
+    rows,
+  };
+}
+
+function summaryPeriodLabel(range?: DateRange | null) {
+  if (range?.type === "month") return { column: "month", value: `${range.year}-${String(range.month).padStart(2, "0")}` };
+  if (range?.type === "explicit" && /^\d{4}-01-01$/.test(range.start) && range.end === `${Number(range.start.slice(0, 4)) + 1}-01-01`) {
+    return { column: "year", value: range.start.slice(0, 4) };
+  }
+  return { column: "period", value: dateLabel(range) };
 }
 
 async function runBookingCount(intent: Intent): Promise<QueryResult> {
