@@ -27,6 +27,7 @@ type Intent = {
 type Clarification = { type: "clarification"; question: string; options?: string[] };
 type ModelOutput = Intent | Clarification;
 type QueryResult = { answer: string; columns: string[]; rows: Record<string, unknown>[] };
+type IntentSource = "fast-path" | "openai";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
 const MAX_ROWS = 100;
@@ -42,15 +43,22 @@ export async function POST(request: Request) {
       return Response.json({ type: "clarification", question: "What would you like to ask about Studio Ops data?" });
     }
 
-    const modelOutput = await getIntent(question);
+    const { output: modelOutput, source } = await getIntent(question);
     const intent = normalizeModelOutput(modelOutput, question);
 
-    if (intent.type === "clarification") return Response.json(intent);
+    if (intent.type === "clarification") {
+      logStudioChat({ source, output: intent });
+      return Response.json(intent);
+    }
 
     const validation = validateIntent(intent, question);
-    if (validation) return Response.json(validation);
+    if (validation) {
+      logStudioChat({ source, output: intent, clarification: validation });
+      return Response.json(validation);
+    }
 
     const result = await runApprovedQuery(intent);
+    logStudioChat({ source, output: intent, rowCount: result.rows.length });
     return Response.json({ type: "answer", ...result });
   } catch (error) {
     console.error("Studio Chat failed:", error);
@@ -58,7 +66,10 @@ export async function POST(request: Request) {
   }
 }
 
-async function getIntent(question: string): Promise<ModelOutput> {
+async function getIntent(question: string): Promise<{ output: ModelOutput; source: IntentSource }> {
+  const fastPath = parseFastPathIntent(question);
+  if (fastPath) return { output: fastPath, source: "fast-path" };
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -79,7 +90,7 @@ async function getIntent(question: string): Promise<ModelOutput> {
   const data = await response.json();
   const text = extractResponseText(data);
   if (!text) throw new Error("OpenAI returned no JSON text");
-  return JSON.parse(text) as ModelOutput;
+  return { output: JSON.parse(text) as ModelOutput, source: "openai" };
 }
 
 function extractResponseText(data: unknown): string | null {
@@ -109,6 +120,153 @@ Booking rules: default dateBasis to appointment_datetime. Clarify booking date b
 Mixed monthly summaries: expenses are bank debits; bank revenue is bank credits; bookings are Acuity counts. If grouped by calendar_name/room type, grouping applies only to Acuity booking counts unless explicit reconciliation data exists; do not allocate bank revenue or expenses by calendar_name.
 If a month is given without a year, ask which year.
 Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
+
+const MONTHS: Record<string, number> = {
+  january: 1,
+  jan: 1,
+  february: 2,
+  feb: 2,
+  march: 3,
+  mar: 3,
+  april: 4,
+  apr: 4,
+  may: 5,
+  june: 6,
+  jun: 6,
+  july: 7,
+  jul: 7,
+  august: 8,
+  aug: 8,
+  september: 9,
+  sep: 9,
+  sept: 9,
+  october: 10,
+  oct: 10,
+  november: 11,
+  nov: 11,
+  december: 12,
+  dec: 12,
+};
+
+function parseFastPathIntent(question: string): ModelOutput | null {
+  const normalized = question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim();
+  const dateRange = parseFastPathDateRange(normalized);
+  const hasDate = Boolean(dateRange);
+  const mentionsBookings = /\b(bookings?|appointments?|acuity)\b/.test(normalized);
+  const mentionsCredits = /\b(credits?|bank revenue|payments?)\b/.test(normalized);
+  const mentionsDebits = /\b(debits?|expenses?)\b/.test(normalized);
+  const revenueMetric = detectRevenueMetric(question);
+  const unsourcedRevenue = /\brevenues?\b/.test(normalized) && !revenueMetric && !/\bbank revenue\b/.test(normalized);
+  const dateBasis = detectAcuityDateBasis(question);
+  const groupBy = detectGrouping(question);
+
+  if (hasMonthWithoutYear(normalized)) {
+    return { type: "clarification", question: "Which month and year should I use?" };
+  }
+  if (!hasDate && !/\b(bank revenue|credits?|debits?|expenses?|payments?)\b/.test(normalized)) return null;
+  if (/\bbookings?\s+by\s+date\b/.test(normalized) && !dateBasis) return null;
+  if (/\bby\s+(?!calendar name\b|room type\b|appointment date\b|booking created date\b|created date\b|booked date\b)/.test(normalized)) return null;
+
+  if (mentionsBookings && !mentionsCredits && !mentionsDebits && !/\brevenues?\b/.test(normalized)) {
+    return {
+      type: "intent",
+      intent: groupBy ? "acuity_booking_by_room_type" : "acuity_booking_count",
+      mode: /\b(show|list)\b/.test(normalized) ? "list" : "total",
+      dateRange,
+      groupBy,
+      dateBasis: dateBasis ?? "appointment_datetime",
+      searchText: null,
+      revenueMetric: null,
+    };
+  }
+
+  const monthlyMetricCount = [mentionsDebits, mentionsCredits || revenueMetric === "bank_revenue", mentionsBookings].filter(Boolean).length;
+  if (hasDate && monthlyMetricCount >= 2) {
+    if (unsourcedRevenue && !/\bbank revenue\b.*\brevenues?\b|\brevenues?\b.*\bbank revenue\b/.test(normalized)) return null;
+    return {
+      type: "intent",
+      intent: "monthly_summary",
+      mode: "both",
+      dateRange,
+      groupBy,
+      dateBasis: dateBasis ?? "appointment_datetime",
+      searchText: null,
+      includeAcuityValue: revenueMetric === "acuity_value" || revenueMetric === "both",
+      revenueMetric: revenueMetric ?? (mentionsCredits ? "bank_revenue" : null),
+    };
+  }
+
+  if (unsourcedRevenue) return null;
+
+  if (mentionsCredits || revenueMetric === "bank_revenue") {
+    return {
+      type: "intent",
+      intent: "bank_credits",
+      mode: /\b(show|list|tell me)\b/.test(normalized) ? "list" : "total",
+      dateRange,
+      searchText: extractBankSearchText(question, "credit"),
+      groupBy: null,
+      dateBasis: null,
+      revenueMetric: "bank_revenue",
+    };
+  }
+
+  if (mentionsDebits) {
+    return {
+      type: "intent",
+      intent: "bank_debits",
+      mode: /\b(show|list)\b/.test(normalized) ? "list" : "total",
+      dateRange,
+      searchText: extractBankSearchText(question, "debit"),
+      groupBy: null,
+      dateBasis: null,
+      revenueMetric: null,
+    };
+  }
+
+  return null;
+}
+
+function hasMonthWithoutYear(question: string) {
+  return /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/.test(question)
+    && !/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+20\d{2}\b/.test(question);
+}
+
+function parseFastPathDateRange(question: string): DateRange | null {
+  const lastMonths = question.match(/\b(?:over|for|in|during)\s+(?:the\s+)?(?:past|last)\s+(\d{1,2})\s+months?\b/);
+  if (lastMonths) return { type: "last_months", months: Number(lastMonths[1]) };
+
+  const monthYear = question.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})\b/);
+  if (monthYear) return { type: "month", month: MONTHS[monthYear[1]], year: Number(monthYear[2]) };
+
+  const now = new Date();
+  if (/\bthis month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth());
+  if (/\blast month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth() - 1);
+  if (/\bthis year\b/.test(question)) return { type: "explicit", start: isoDate(new Date(Date.UTC(now.getUTCFullYear(), 0, 1))), end: isoDate(new Date(Date.UTC(now.getUTCFullYear(), 11, 31))) };
+  return null;
+}
+
+function monthRange(year: number, zeroBasedMonth: number): DateRange {
+  const start = new Date(Date.UTC(year, zeroBasedMonth, 1));
+  const end = new Date(Date.UTC(year, zeroBasedMonth + 1, 0));
+  return { type: "explicit", start: isoDate(start), end: isoDate(end) };
+}
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function extractBankSearchText(question: string, kind: "credit" | "debit") {
+  const sourcePattern = kind === "credit"
+    ? /\b(?:from|source(?:d)?\s+from)\s+(.+?)(?:\s+(?:over|for|in|during|last|past|this)\b|[?.!,]|$)/i
+    : /\b(?:for|from)\s+(.+?)(?:\s+(?:over|in|during|last|this)\b|[?.!,]|$)/i;
+  const source = question.match(sourcePattern)?.[1]?.trim();
+  if (source && !/^(may|june?|july?|jan|feb|mar|apr|aug|sep|oct|nov|dec)\b/i.test(source)) return source;
+
+  const beforeMetric = question.match(new RegExp(`\\\\b(?:show|list|total|how many|how much)\\\\s+(.+?)\\\\s+(?:${kind === "credit" ? "credits?|payments?|bank revenue" : "debits?|expenses?"})\\\\b`, "i"))?.[1]?.trim();
+  if (beforeMetric && !/^(bank|the|me)$/i.test(beforeMetric)) return beforeMetric;
+  return null;
+}
 
 function normalizeModelOutput(output: ModelOutput, question: string): ModelOutput {
   if (output.type === "clarification") return output;
@@ -208,6 +366,35 @@ function dateLabel(range?: DateRange | null) {
   if (range.type === "last_months") return `the past ${range.months} month${range.months === 1 ? "" : "s"}`;
   if (range.type === "month") return `${range.year}-${String(range.month).padStart(2, "0")}`;
   return `${range.start} to ${range.end}`;
+}
+
+function logStudioChat({
+  source,
+  output,
+  clarification,
+  rowCount,
+}: {
+  source: IntentSource;
+  output: ModelOutput;
+  clarification?: Clarification;
+  rowCount?: number;
+}) {
+  const payload = output.type === "intent"
+    ? {
+        source,
+        intent: output.intent,
+        dateRange: output.dateRange ?? null,
+        rowCount,
+        clarified: Boolean(clarification),
+      }
+    : {
+        source,
+        intent: "clarification",
+        dateRange: null,
+        rowCount,
+        clarified: true,
+      };
+  console.info("Studio Chat request:", payload);
 }
 
 async function runApprovedQuery(intent: Intent): Promise<QueryResult> {

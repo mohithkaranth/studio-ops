@@ -35,6 +35,13 @@ export default function StudioChatPage() {
     void ask();
   }
 
+  function clearChat() {
+    setQuestion("");
+    setResponse(null);
+    setLoading(false);
+    setError("");
+  }
+
   return (
     <main className="min-h-screen w-full bg-zinc-950 text-zinc-100">
       <div className="mx-auto w-full max-w-6xl space-y-8 px-6 py-10 sm:px-8 lg:px-10">
@@ -62,6 +69,13 @@ export default function StudioChatPage() {
               className="rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? "Asking..." : "Ask"}
+            </button>
+            <button
+              type="button"
+              onClick={clearChat}
+              className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-semibold text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800"
+            >
+              Clear
             </button>
           </div>
         </form>
