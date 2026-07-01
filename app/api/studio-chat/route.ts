@@ -20,6 +20,7 @@ type Intent = {
   searchText?: string | null;
   dateRange?: DateRange | null;
   groupBy?: "calendar_name" | "month" | null;
+  dateBasis?: "appointment_datetime" | "created_datetime" | null;
   includeAcuityValue?: boolean;
   revenueMetric?: "bank_revenue" | "acuity_value" | "both" | null;
 };
@@ -41,11 +42,12 @@ export async function POST(request: Request) {
       return Response.json({ type: "clarification", question: "What would you like to ask about Studio Ops data?" });
     }
 
-    const intent = await getIntent(question);
+    const modelOutput = await getIntent(question);
+    const intent = normalizeModelOutput(modelOutput, question);
 
     if (intent.type === "clarification") return Response.json(intent);
 
-    const validation = validateIntent(intent);
+    const validation = validateIntent(intent, question);
     if (validation) return Response.json(validation);
 
     const result = await runApprovedQuery(intent);
@@ -97,13 +99,75 @@ function extractResponseText(data: unknown): string | null {
 const STUDIO_CHAT_SYSTEM_PROMPT = `You convert Studio Ops questions into JSON intent only. Never write SQL.
 Allowed data sources and fields:
 - bank_transactions: transaction_date, description_1, description_2, debit, credit.
-- acuity_appointments: appointment_datetime, calendar_name, canceled, price.
-Definitions: bookings are count of non-cancelled Acuity appointments by appointment_datetime; room type is calendar_name; bank revenue is sum of credits; bank expenses are sum of debits; Acuity appointment value is sum of price; payments from a person/source are bank credits where description_1 or description_2 contains the search text.
+- acuity_appointments: appointment_datetime, created_datetime, calendar_name, canceled, price.
+Definitions: bank revenue is sum of bank credits; bank expenses are sum of bank debits; Acuity appointment value is sum of appointment price; bookings are count of non-cancelled Acuity appointments; room type is calendar_name; payments from a person/source are bank credits where description_1 or description_2 contains the search text.
 Supported intents: bank_credits, bank_debits, acuity_booking_count, acuity_booking_by_room_type, monthly_summary.
-Return one JSON object. If ambiguous, return {"type":"clarification","question":"...","options":["..."]}. For revenue ambiguity ask whether bank revenue, Acuity appointment value, or both. If a month is given without a year, ask which year. If bookings is used, default to acuity booking count. If room type is used, group by calendar_name.
-Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
+Return one JSON object. Never write SQL. Clarify only when a missing choice changes the result.
+Distinguish date basis, grouping dimension, and metric source. "By appointment date" sets dateBasis to appointment_datetime, not groupBy. "By booking created date" sets dateBasis to created_datetime. "By calendar name" and "by room type" set groupBy to calendar_name.
+Revenue rules: if the user says bank revenue, use bank_revenue; if the user says Acuity revenue, Acuity appointment value, or appointment value, use acuity_value; if the user says both revenue types, use both. Ask revenue clarification only for unsourced "revenue".
+Booking rules: default dateBasis to appointment_datetime. Clarify booking date basis only when the user asks to compare/group bookings by date but does not say appointment date or booking created date. Booking counts default to non-cancelled Acuity appointments.
+Mixed monthly summaries: expenses are bank debits; bank revenue is bank credits; bookings are Acuity counts. If grouped by calendar_name/room type, grouping applies only to Acuity booking counts unless explicit reconciliation data exists; do not allocate bank revenue or expenses by calendar_name.
+If a month is given without a year, ask which year.
+Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
 
-function validateIntent(intent: Intent): Clarification | null {
+function normalizeModelOutput(output: ModelOutput, question: string): ModelOutput {
+  if (output.type === "clarification") return output;
+
+  const normalized: Intent = { ...output };
+  const source = detectRevenueMetric(question);
+  const dateBasis = detectAcuityDateBasis(question);
+  const groupBy = detectGrouping(question);
+
+  if (source) normalized.revenueMetric = source;
+  if (dateBasis) normalized.dateBasis = dateBasis;
+  if (!normalized.dateBasis && usesBookings(normalized, question)) normalized.dateBasis = "appointment_datetime";
+  if (groupBy) {
+    normalized.groupBy = groupBy;
+    if (normalized.intent === "acuity_booking_count") normalized.intent = "acuity_booking_by_room_type";
+  }
+  if (normalized.intent === "acuity_booking_by_room_type") normalized.groupBy = "calendar_name";
+  if (normalized.intent === "bank_credits" && /\bpayments?\s+from\b/i.test(question) && !normalized.searchText) {
+    normalized.searchText = question.replace(/^.*?\bpayments?\s+from\s+/i, "").replace(/\b(over|for|in|during|last|past)\b.*$/i, "").trim() || normalized.searchText;
+  }
+
+  return normalized;
+}
+
+function detectRevenueMetric(question: string): Intent["revenueMetric"] | null {
+  if (/\b(both|all)\s+revenue\s+types?\b/i.test(question) || /\brevenue\s+(from\s+)?(both|all)\b/i.test(question)) return "both";
+  if (/\bbank\s+revenue\b/i.test(question)) return "bank_revenue";
+  if (/\b(acuity\s+revenue|acuity\s+appointment\s+value|appointment\s+value)\b/i.test(question)) return "acuity_value";
+  return null;
+}
+
+function detectAcuityDateBasis(question: string): Intent["dateBasis"] | null {
+  if (/\b(by|using|based on|basis)\s+(the\s+)?(appointment|session)\s+date\b/i.test(question)) return "appointment_datetime";
+  if (/\b(by|using|based on|basis)\s+(the\s+)?(booking\s+created|created|booked)\s+date\b/i.test(question)) return "created_datetime";
+  return null;
+}
+
+function detectGrouping(question: string): Intent["groupBy"] | null {
+  if (/\bby\s+(calendar\s+name|room\s+type)\b/i.test(question)) return "calendar_name";
+  return null;
+}
+
+function hasUnsourcedRevenue(question: string) {
+  return /\brevenue\b/i.test(question) && !detectRevenueMetric(question);
+}
+
+function usesBookings(intent: Intent, question: string) {
+  return intent.intent === "acuity_booking_count" || intent.intent === "acuity_booking_by_room_type" || intent.intent === "monthly_summary" || /\b(bookings?|appointments?)\b/i.test(question);
+}
+
+function needsBookingDateBasisClarification(intent: Intent, question: string) {
+  return usesBookings(intent, question) && !detectAcuityDateBasis(question) && /\b(compare|group|break\s*down|show)\b.*\bbookings?\b.*\bby\s+date\b/i.test(question);
+}
+
+function getAcuityDateColumn(dateBasis: Intent["dateBasis"] | undefined | null) {
+  return dateBasis === "created_datetime" ? sql`created_datetime` : sql`appointment_datetime`;
+}
+
+function validateIntent(intent: Intent, question = ""): Clarification | null {
   const allowed = new Set<IntentKind>(["bank_credits", "bank_debits", "acuity_booking_count", "acuity_booking_by_room_type", "monthly_summary"]);
   if (intent.type !== "intent" || !allowed.has(intent.intent)) {
     return { type: "clarification", question: "I can answer bank credit/debit, booking count, room type, and monthly summary questions. Which one do you want?" };
@@ -119,7 +183,10 @@ function validateIntent(intent: Intent): Clarification | null {
       return { type: "clarification", question: "What exact date range should I use?" };
     }
   }
-  if (intent.intent === "monthly_summary" && !intent.revenueMetric) {
+  if (needsBookingDateBasisClarification(intent, question)) {
+    return { type: "clarification", question: "For bookings by date, should I use appointment date or booking created date?", options: ["Appointment date", "Booking created date"] };
+  }
+  if (intent.intent === "monthly_summary" && !intent.revenueMetric && hasUnsourcedRevenue(question)) {
     return { type: "clarification", question: "For revenue, do you mean bank revenue, Acuity appointment value, or both?", options: ["Bank revenue", "Acuity appointment value", "Both"] };
   }
   return null;
@@ -129,7 +196,7 @@ function isIsoDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function getDateSql(range: DateRange | null | undefined, column: ReturnType<typeof sql>) {
+function getDateSql(range: DateRange | null | undefined, column: any) {
   if (!range) return sql``;
   if (range.type === "last_months") return sql`and ${column} >= date_trunc('month', current_date) - (${range.months - 1} * interval '1 month') and ${column} < current_date + interval '1 day'`;
   if (range.type === "month") return sql`and ${column} >= make_date(${range.year}, ${range.month}, 1) and ${column} < make_date(${range.year}, ${range.month}, 1) + interval '1 month'`;
@@ -178,22 +245,24 @@ async function runBank(intent: Intent, kind: "credit" | "debit"): Promise<QueryR
 }
 
 async function runBookingCount(intent: Intent): Promise<QueryResult> {
-  const dateFilter = getDateSql(intent.dateRange, sql`appointment_datetime`);
+  const dateColumn = getAcuityDateColumn(intent.dateBasis);
+  const dateFilter = getDateSql(intent.dateRange, dateColumn);
   const rows = await sql<Record<string, unknown>[]>`
     select count(*)::int as booking_count
     from acuity_appointments
-    where appointment_datetime is not null and coalesce(canceled, false) is false
+    where ${dateColumn} is not null and coalesce(canceled, false) is false
       ${dateFilter}
   `;
   return { answer: `I found ${rows[0]?.booking_count ?? 0} non-cancelled bookings for ${dateLabel(intent.dateRange)}.`, columns: ["booking_count"], rows };
 }
 
 async function runBookingsByRoom(intent: Intent): Promise<QueryResult> {
-  const dateFilter = getDateSql(intent.dateRange, sql`appointment_datetime`);
+  const dateColumn = getAcuityDateColumn(intent.dateBasis);
+  const dateFilter = getDateSql(intent.dateRange, dateColumn);
   const rows = await sql<Record<string, unknown>[]>`
     select coalesce(nullif(calendar_name, ''), 'Unknown room type') as calendar_name, count(*)::int as booking_count
     from acuity_appointments
-    where appointment_datetime is not null and coalesce(canceled, false) is false
+    where ${dateColumn} is not null and coalesce(canceled, false) is false
       ${dateFilter}
     group by 1 order by booking_count desc, calendar_name asc
   `;
@@ -202,14 +271,16 @@ async function runBookingsByRoom(intent: Intent): Promise<QueryResult> {
 
 async function runMonthlySummary(intent: Intent): Promise<QueryResult> {
   const bankDateFilter = getDateSql(intent.dateRange, sql`transaction_date`);
-  const acuityDateFilter = getDateSql(intent.dateRange, sql`appointment_datetime`);
+  const acuityDateColumn = getAcuityDateColumn(intent.dateBasis);
+  const acuityDateFilter = getDateSql(intent.dateRange, acuityDateColumn);
+  if (intent.groupBy === "calendar_name") return runMonthlySummaryByCalendar(intent, bankDateFilter, acuityDateColumn, acuityDateFilter);
   const rows = await sql<Record<string, unknown>[]>`
     with bank as (
       select date_trunc('month', transaction_date)::date as month_start, sum(coalesce(credit, 0)) as bank_revenue, sum(coalesce(debit, 0)) as bank_expenses
       from bank_transactions where transaction_date is not null ${bankDateFilter} group by 1
     ), acuity as (
-      select date_trunc('month', appointment_datetime)::date as month_start, count(*)::int as booking_count, sum(coalesce(price, 0)) as acuity_appointment_value
-      from acuity_appointments where appointment_datetime is not null and coalesce(canceled, false) is false ${acuityDateFilter} group by 1
+      select date_trunc('month', ${acuityDateColumn})::date as month_start, count(*)::int as booking_count, sum(coalesce(price, 0)) as acuity_appointment_value
+      from acuity_appointments where ${acuityDateColumn} is not null and coalesce(canceled, false) is false ${acuityDateFilter} group by 1
     )
     select coalesce(bank.month_start, acuity.month_start)::text as month_start,
       coalesce(acuity.booking_count, 0)::int as booking_count,
@@ -222,4 +293,49 @@ async function runMonthlySummary(intent: Intent): Promise<QueryResult> {
   `;
   const totalBookings = rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0);
   return { answer: `I found ${rows.length} monthly summary row${rows.length === 1 ? "" : "s"} for ${dateLabel(intent.dateRange)}, covering ${totalBookings} non-cancelled bookings.`, columns: ["month_start", "booking_count", "bank_revenue", "bank_expenses", "net_movement", "acuity_appointment_value"], rows };
+}
+
+
+async function runMonthlySummaryByCalendar(
+  intent: Intent,
+  bankDateFilter: any,
+  acuityDateColumn: any,
+  acuityDateFilter: any,
+): Promise<QueryResult> {
+  const rows = await sql<Record<string, unknown>[]>`
+    with bank as (
+      select
+        date_trunc('month', transaction_date)::date as month_start,
+        sum(coalesce(credit, 0)) as bank_revenue,
+        sum(coalesce(debit, 0)) as bank_expenses
+      from bank_transactions
+      where transaction_date is not null ${bankDateFilter}
+      group by 1
+    ), acuity as (
+      select
+        date_trunc('month', ${acuityDateColumn})::date as month_start,
+        coalesce(nullif(calendar_name, ''), 'Unknown room type') as calendar_name,
+        count(*)::int as booking_count,
+        sum(coalesce(price, 0)) as acuity_appointment_value
+      from acuity_appointments
+      where ${acuityDateColumn} is not null and coalesce(canceled, false) is false ${acuityDateFilter}
+      group by 1, 2
+    )
+    select month_start::text, 'bank_totals_not_allocated' as row_type, null::text as calendar_name,
+      null::int as booking_count, bank_revenue::text, bank_expenses::text,
+      (bank_revenue - bank_expenses)::text as net_movement, null::text as acuity_appointment_value
+    from bank
+    union all
+    select month_start::text, 'acuity_bookings_by_calendar' as row_type, calendar_name,
+      booking_count, null::text as bank_revenue, null::text as bank_expenses,
+      null::text as net_movement, acuity_appointment_value::text
+    from acuity
+    order by month_start asc, row_type asc, calendar_name asc nulls first
+  `;
+  const totalBookings = rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0);
+  return {
+    answer: `I found ${rows.length} monthly summary row${rows.length === 1 ? "" : "s"} for ${dateLabel(intent.dateRange)}, with bank totals left unallocated and ${totalBookings} non-cancelled bookings grouped by calendar name.`,
+    columns: ["month_start", "row_type", "calendar_name", "booking_count", "bank_revenue", "bank_expenses", "net_movement", "acuity_appointment_value"],
+    rows,
+  };
 }
