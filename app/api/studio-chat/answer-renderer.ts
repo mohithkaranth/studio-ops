@@ -1,3 +1,4 @@
+import { formatAggregateDimensionRows } from "./dimension-utils";
 import { isComparisonQuery, type SemanticQueryPayload } from "./semantic-query";
 import type { ShapedResult } from "./result-shaper";
 
@@ -7,11 +8,11 @@ const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD
 
 export function renderAnswer(query: SemanticQueryPayload, result: ShapedResult): ChatAnswer {
   if (isComparisonQuery(query)) {
-    const rows = result.aggregateRows ?? [];
+    const rows = formatAggregateDimensionRows(result.aggregateRows ?? []);
     return { answer: `Found ${rows.length} comparison ${rows.length === 1 ? "result" : "results"}.`, columns: columnsFor(rows), rows };
   }
   if (query.resultMode === "aggregate_only") {
-    const rows = result.aggregateRows ?? [];
+    const rows = formatAggregateDimensionRows(result.aggregateRows ?? []);
     return { answer: `Found ${rows.length} aggregate ${rows.length === 1 ? "result" : "results"}.`, columns: columnsFor(rows), rows };
   }
   const rows = result.rows ?? [];
