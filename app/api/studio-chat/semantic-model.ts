@@ -2,9 +2,12 @@ import type { Domain } from "./semantic-query";
 
 export type MetricDefinition = { label: string; expression: string; defaultFilter?: string };
 export type DimensionDefinition = { label: string; expression?: string; column?: string; aliases?: string[] };
+export type DateBasis = "transaction_date" | "value_date" | "appointment_datetime" | "created_datetime";
+
 export type SemanticDomainModel = {
   table: string;
-  defaultDateBasis: string;
+  defaultDateBasis: DateBasis;
+  allowedDateBases: DateBasis[];
   metrics: Record<string, MetricDefinition>;
   dimensions: Record<string, DimensionDefinition>;
   rowFields: string[];
@@ -15,6 +18,7 @@ export const semanticModel: Record<Domain, SemanticDomainModel> = {
   bank: {
     table: "bank_transactions",
     defaultDateBasis: "transaction_date",
+    allowedDateBases: ["transaction_date", "value_date"],
     metrics: {
       bank_credits: { label: "Bank credits", expression: "SUM(COALESCE(credit, 0))", defaultFilter: "credit > 0" },
       bank_debits: { label: "Bank debits", expression: "SUM(COALESCE(debit, 0))", defaultFilter: "debit > 0" },
@@ -34,6 +38,7 @@ export const semanticModel: Record<Domain, SemanticDomainModel> = {
   acuity: {
     table: "acuity_appointments",
     defaultDateBasis: "appointment_datetime",
+    allowedDateBases: ["appointment_datetime", "created_datetime"],
     metrics: {
       booking_count: { label: "Booking count", expression: "COUNT(*)", defaultFilter: "COALESCE(canceled, false) IS FALSE" },
       booking_value: { label: "Booking value", expression: "SUM(COALESCE(price, 0))", defaultFilter: "COALESCE(canceled, false) IS FALSE" },

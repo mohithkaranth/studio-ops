@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { semanticModel } from "./semantic-model";
+import { semanticModel, type DateBasis } from "./semantic-model";
 import type { SemanticQuery } from "./semantic-query";
 
 export type BuiltQuery = Promise<Record<string, unknown>[]>;
@@ -10,9 +10,9 @@ export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
   const model = semanticModel[query.domain];
   const dimensions = query.dimensions ?? [];
   const select: string[] = [];
+  const dateBasis = selectedDateBasis(query);
   dimensions.forEach((name) => {
-    const dimension = model.dimensions[name];
-    select.push(`${dimension.expression ?? dimension.column} AS ${name}`);
+    select.push(`${dimensionExpression(query, name, dateBasis)} AS ${name}`);
   });
   query.metrics.forEach((name) => select.push(`${model.metrics[name].expression} AS ${name}`));
   const parts = buildWhere(query);
@@ -37,10 +37,9 @@ export function buildBankRowSummaryQuery(query: SemanticQuery): BuiltQuery {
 }
 
 function buildWhere(query: SemanticQuery): SqlParts {
-  const model = semanticModel[query.domain];
   const where: string[] = [];
   const params: (string | number)[] = [];
-  const dateBasis = query.filters?.dateBasis ?? model.defaultDateBasis;
+  const dateBasis = selectedDateBasis(query);
   if (query.dateRange) {
     params.push(query.dateRange.startDate);
     where.push(`${dateBasis} >= $${params.length}`);
@@ -69,4 +68,21 @@ function defaultMetricFilters(query: SemanticQuery): string[] {
   const model = semanticModel[query.domain];
   if (query.domain === "bank" && (query.metrics.includes("net_movement") || (query.metrics.includes("bank_credits") && query.metrics.includes("bank_debits")))) return [];
   return [...new Set(query.metrics.map((metric) => model.metrics[metric].defaultFilter).filter((filter): filter is string => Boolean(filter)))];
+}
+
+
+function selectedDateBasis(query: SemanticQuery): DateBasis {
+  const model = semanticModel[query.domain];
+  const requested = query.filters?.dateBasis;
+  return requested && model.allowedDateBases.includes(requested) ? requested : model.defaultDateBasis;
+}
+
+function dimensionExpression(query: SemanticQuery, name: string, dateBasis: DateBasis): string {
+  const dimension = semanticModel[query.domain].dimensions[name];
+  if ((name === "month" || name === "year") && isTemporalDateBasis(dateBasis)) return `date_trunc('${name}', ${dateBasis})::date`;
+  return dimension.expression ?? dimension.column ?? name;
+}
+
+function isTemporalDateBasis(dateBasis: DateBasis): boolean {
+  return dateBasis === "transaction_date" || dateBasis === "value_date" || dateBasis === "appointment_datetime" || dateBasis === "created_datetime";
 }
