@@ -11,9 +11,9 @@ type IntentKind =
   | "acuity_booking_by_room_type"
   | "monthly_summary";
 type DateRange =
-  | { type: "explicit"; start: string; end: string }
-  | { type: "last_months"; months: number }
-  | { type: "month"; month: number; year: number };
+  | { type: "explicit"; start: string; end: string; label?: string }
+  | { type: "last_months"; months: number; label?: string }
+  | { type: "month"; month: number; year: number; label?: string };
 type TransactionType = "credit" | "debit" | "both";
 type MetricMode = "total" | "count" | "list" | "summary";
 type ResultMode = "aggregate_only" | "rows_only" | "aggregate_with_rows";
@@ -27,7 +27,7 @@ type Intent = {
   rowLimit?: number;
   searchText?: string | null;
   dateRange?: DateRange | null;
-  groupBy?: "calendar_name" | "month" | null;
+  groupBy?: "calendar_name" | "month" | "month_calendar_name" | null;
   dateBasis?: "appointment_datetime" | "created_datetime" | null;
   includeAcuityValue?: boolean;
   revenueMetric?: "bank_revenue" | "acuity_value" | "both" | null;
@@ -123,13 +123,13 @@ Allowed data sources and fields:
 Definitions: bank revenue is sum of bank credits; bank expenses are sum of bank debits; Acuity appointment value is sum of appointment price; bookings are count of non-cancelled Acuity appointments; room type is calendar_name; payments from a person/source are bank credits where description_1 or description_2 contains the search text.
 Supported intents: bank_credits, bank_debits, bank_movement_summary, acuity_booking_count, acuity_booking_by_room_type, monthly_summary.
 Return one JSON object. Never write SQL. Clarify only when a missing choice changes the result.
-Distinguish date basis, grouping dimension, and metric source. "By appointment date" sets dateBasis to appointment_datetime, not groupBy. "By booking created date" sets dateBasis to created_datetime. "By calendar name" and "by room type" set groupBy to calendar_name.
+Distinguish date basis, grouping dimension, and metric source. "By appointment date" sets dateBasis to appointment_datetime, not groupBy. "By booking created date" sets dateBasis to created_datetime. "By calendar name" and "by room type" set groupBy to calendar_name. "By month" sets groupBy to month. If both month and calendar name/room are requested, set groupBy to month_calendar_name.
 Revenue rules: if the user says bank revenue, use bank_revenue; if the user says Acuity revenue, Acuity appointment value, or appointment value, use acuity_value; if the user says both revenue types, use both. Ask revenue clarification only for unsourced "revenue".
 Booking rules: default dateBasis to appointment_datetime. Clarify booking date basis only when the user asks to compare/group bookings by date but does not say appointment date or booking created date. Booking counts default to non-cancelled Acuity appointments.
 Mixed monthly summaries: expenses are bank debits; bank revenue is bank credits; bookings are Acuity counts. If grouped by calendar_name/room type, grouping applies only to Acuity booking counts unless explicit reconciliation data exists; do not allocate bank revenue or expenses by calendar_name.
 If a month is given without a year, ask which year. Treat year phrases like "in the year 2026", "for 2026", "during 2026", and "2026 total" as an explicit dateRange from 2026-01-01 to exclusive 2027-01-01. If users ask for total debit and credit / credits and debits / expenses and revenue, use bank_movement_summary with transactionType both, metricMode summary, resultMode aggregate_only so both sides and net movement are returned, not transaction rows.
 Bank transaction intents must include transactionType (credit|debit|both), metricMode (total|count|list|summary), resultMode (aggregate_only|rows_only|aggregate_with_rows), rowLimit (default 50 for row outputs), searchText, and dateRange. Preserve named vendors/sources/people/references (for example Stripe, Grab, Muhammad, rent, PayNow, FAST PAYMENT) as searchText for bank credits/debits and payments from a person/source. Aggregate wording (how much, total, sum, summary, overall, amount) means aggregate_only. Row/detail wording (show all, list, details, transactions, show payments, tell me all payments) means aggregate_with_rows and must still include aggregate count and amount. Ask for clarification for unsourced "revenue".
-Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|bank_movement_summary|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","transactionType":"credit|debit|both","metricMode":"total|count|list|summary","resultMode":"aggregate_only|rows_only|aggregate_with_rows","rowLimit":number,"searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
+Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|bank_movement_summary|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","transactionType":"credit|debit|both","metricMode":"total|count|list|summary","resultMode":"aggregate_only|rows_only|aggregate_with_rows","rowLimit":number,"searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month|month_calendar_name"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
 
 const MONTHS: Record<string, number> = {
   january: 1,
@@ -185,7 +185,7 @@ function normalizeRowLimit(rowLimit: unknown, resultMode?: ResultMode) {
 
 function parseFastPathIntent(question: string): ModelOutput | null {
   const normalized = question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim();
-  const dateRange = parseFastPathDateRange(normalized);
+  const dateRange = parseSharedDateRange(normalized);
   const hasDate = Boolean(dateRange);
   const mentionsBookings = /\b(bookings?|appointments?|acuity)\b/.test(normalized);
   const mentionsCredits = /\b(credits?|bank revenue|payments?)\b/.test(normalized);
@@ -205,7 +205,7 @@ function parseFastPathIntent(question: string): ModelOutput | null {
   }
   if (!hasDate && !/\b(bank revenue|credits?|debits?|expenses?|payments?)\b/.test(normalized)) return null;
   if (/\bbookings?\s+by\s+date\b/.test(normalized) && !dateBasis) return null;
-  if (/\bby\s+(?!calendar name\b|room type\b|appointment date\b|booking created date\b|created date\b|booked date\b)/.test(normalized)) return null;
+  if (/\bby\s+(?!month\b|calendar name\b|calendar\b|room\b|room type\b|appointment date\b|booking created date\b|created date\b|booked date\b)/.test(normalized)) return null;
 
   if (mentionsBookings && !mentionsCredits && !mentionsDebits && !/\brevenues?\b/.test(normalized)) {
     return {
@@ -300,17 +300,22 @@ function hasMonthWithoutYear(question: string) {
     && !/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+20\d{2}\b/.test(question);
 }
 
-function parseFastPathDateRange(question: string): DateRange | null {
-  const lastMonths = question.match(/\b(?:over|for|in|during)\s+(?:the\s+)?(?:past|last)\s+(\d{1,2})\s+months?\b/);
-  if (lastMonths) return { type: "last_months", months: Number(lastMonths[1]) };
+function parseSharedDateRange(question: string, now = new Date()): DateRange | null {
+  const lastMonths = question.match(/\b(?:(?:over|for|in|during)\s+(?:the\s+)?)?(?:past|last)\s+(\d{1,2})\s+months?\b/);
+  if (lastMonths) {
+    const months = Number(lastMonths[1]);
+    return { type: "last_months", months, label: `the past ${months} month${months === 1 ? "" : "s"}` };
+  }
 
   const monthYear = question.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})\b/);
-  if (monthYear) return { type: "month", month: MONTHS[monthYear[1]], year: Number(monthYear[2]) };
+  if (monthYear) {
+    const month = MONTHS[monthYear[1]];
+    const year = Number(monthYear[2]);
+    return { type: "month", month, year, label: `${year}-${String(month).padStart(2, "0")}` };
+  }
 
-  const yearOnly = question.match(/\b(?:in(?:\s+the\s+year)?|for|during)\s+(20\d{2})\b|\b(20\d{2})\s+total\b/);
-  if (yearOnly) return yearRange(Number(yearOnly[1] ?? yearOnly[2]));
-
-  const now = new Date();
+  const yearOnly = question.match(/\b(?:(?:in|for|during)\s+(?:the\s+)?(?:year\s+)?)(20\d{2})\b|\b(?:the\s+)?year\s+(20\d{2})\b|\b(20\d{2})\s+total\b/);
+  if (yearOnly) return yearRange(Number(yearOnly[1] ?? yearOnly[2] ?? yearOnly[3]));
   if (/\bthis month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth());
   if (/\blast month\b/.test(question)) return monthRange(now.getUTCFullYear(), now.getUTCMonth() - 1);
   if (/\bthis year\b/.test(question)) return yearRange(now.getUTCFullYear());
@@ -320,11 +325,11 @@ function parseFastPathDateRange(question: string): DateRange | null {
 function monthRange(year: number, zeroBasedMonth: number): DateRange {
   const start = new Date(Date.UTC(year, zeroBasedMonth, 1));
   const end = new Date(Date.UTC(year, zeroBasedMonth + 1, 1));
-  return { type: "explicit", start: isoDate(start), end: isoDate(end) };
+  return { type: "explicit", start: isoDate(start), end: isoDate(end), label: isoDate(start).slice(0, 7) };
 }
 
 function yearRange(year: number): DateRange {
-  return { type: "explicit", start: `${year}-01-01`, end: `${year + 1}-01-01` };
+  return { type: "explicit", start: `${year}-01-01`, end: `${year + 1}-01-01`, label: String(year) };
 }
 
 function isoDate(date: Date) {
@@ -350,7 +355,7 @@ function normalizeModelOutput(output: ModelOutput, question: string): ModelOutpu
   const source = detectRevenueMetric(question);
   const dateBasis = detectAcuityDateBasis(question);
   const groupBy = detectGrouping(question);
-  const parsedDateRange = parseFastPathDateRange(question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim());
+  const parsedDateRange = parseSharedDateRange(question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim());
 
   if (parsedDateRange) normalized.dateRange = parsedDateRange;
 
@@ -388,7 +393,7 @@ function normalizeModelOutput(output: ModelOutput, question: string): ModelOutpu
     normalized.groupBy = groupBy;
     if (normalized.intent === "acuity_booking_count") normalized.intent = "acuity_booking_by_room_type";
   }
-  if (normalized.intent === "acuity_booking_by_room_type") normalized.groupBy = "calendar_name";
+  if (normalized.intent === "acuity_booking_by_room_type" && !normalized.groupBy) normalized.groupBy = "calendar_name";
   if (normalized.intent === "bank_credits" && /\bpayments?\s+from\b/i.test(question) && !normalized.searchText) {
     normalized.searchText = question.replace(/^.*?\bpayments?\s+from\s+/i, "").replace(/\b(over|for|in|during|last|past)\b.*$/i, "").trim() || normalized.searchText;
   }
@@ -410,7 +415,11 @@ function detectAcuityDateBasis(question: string): Intent["dateBasis"] | null {
 }
 
 function detectGrouping(question: string): Intent["groupBy"] | null {
-  if (/\bby\s+(calendar\s+name|room\s+type)\b/i.test(question)) return "calendar_name";
+  const byMonth = /\bby\s+month\b|\bmonthly\b/i.test(question);
+  const byCalendar = /\bby\s+(calendar\s+name|calendar|room\s+type|room)\b/i.test(question);
+  if (byMonth && byCalendar) return "month_calendar_name";
+  if (byMonth) return "month";
+  if (byCalendar) return "calendar_name";
   return null;
 }
 
@@ -478,6 +487,7 @@ function dateLabel(range?: DateRange | null) {
   if (!range) return "all time";
   if (range.type === "last_months") return `the past ${range.months} month${range.months === 1 ? "" : "s"}`;
   if (range.type === "month") return `${range.year}-${String(range.month).padStart(2, "0")}`;
+  if (range.label) return range.label;
   if (/^\d{4}-01-01$/.test(range.start) && range.end === `${Number(range.start.slice(0, 4)) + 1}-01-01`) return range.start.slice(0, 4);
   return `${range.start} to ${range.end} (exclusive)`;
 }
@@ -614,6 +624,42 @@ async function runBookingCount(intent: Intent): Promise<QueryResult> {
 async function runBookingsByRoom(intent: Intent): Promise<QueryResult> {
   const dateColumn = getAcuityDateColumn(intent.dateBasis);
   const dateFilter = getDateSql(intent.dateRange, dateColumn);
+
+  if (intent.groupBy === "month_calendar_name") {
+    const rows = await sql<Record<string, unknown>[]>`
+      select
+        date_trunc('month', ${dateColumn})::date::text as month_start,
+        coalesce(nullif(calendar_name, ''), 'Unknown room type') as calendar_name,
+        count(*)::int as booking_count
+      from acuity_appointments
+      where ${dateColumn} is not null and coalesce(canceled, false) is false
+        ${dateFilter}
+      group by 1, 2
+      order by month_start asc, calendar_name asc
+    `;
+    return {
+      answer: `I found ${rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0)} non-cancelled bookings grouped by month and calendar name for ${dateLabel(intent.dateRange)}.`,
+      columns: ["month_start", "calendar_name", "booking_count"],
+      rows,
+    };
+  }
+
+  if (intent.groupBy === "month") {
+    const rows = await sql<Record<string, unknown>[]>`
+      select date_trunc('month', ${dateColumn})::date::text as month_start, count(*)::int as booking_count
+      from acuity_appointments
+      where ${dateColumn} is not null and coalesce(canceled, false) is false
+        ${dateFilter}
+      group by 1
+      order by month_start asc
+    `;
+    return {
+      answer: `I found ${rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0)} non-cancelled bookings grouped by month for ${dateLabel(intent.dateRange)}.`,
+      columns: ["month_start", "booking_count"],
+      rows,
+    };
+  }
+
   const rows = await sql<Record<string, unknown>[]>`
     select coalesce(nullif(calendar_name, ''), 'Unknown room type') as calendar_name, count(*)::int as booking_count
     from acuity_appointments
@@ -621,7 +667,7 @@ async function runBookingsByRoom(intent: Intent): Promise<QueryResult> {
       ${dateFilter}
     group by 1 order by booking_count desc, calendar_name asc
   `;
-  return { answer: `I found ${rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0)} non-cancelled bookings by room type for ${dateLabel(intent.dateRange)}.`, columns: ["calendar_name", "booking_count"], rows };
+  return { answer: `I found ${rows.reduce((sum, row) => sum + Number(row.booking_count ?? 0), 0)} non-cancelled bookings by calendar name for ${dateLabel(intent.dateRange)}.`, columns: ["calendar_name", "booking_count"], rows };
 }
 
 async function runMonthlySummary(intent: Intent): Promise<QueryResult> {
