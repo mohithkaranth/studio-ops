@@ -14,10 +14,17 @@ type DateRange =
   | { type: "explicit"; start: string; end: string }
   | { type: "last_months"; months: number }
   | { type: "month"; month: number; year: number };
+type TransactionType = "credit" | "debit" | "both";
+type MetricMode = "total" | "count" | "list" | "summary";
+type ResultMode = "aggregate_only" | "rows_only" | "aggregate_with_rows";
 type Intent = {
   type: "intent";
   intent: IntentKind;
   mode?: "total" | "list" | "both";
+  transactionType?: TransactionType;
+  metricMode?: MetricMode;
+  resultMode?: ResultMode;
+  rowLimit?: number;
   searchText?: string | null;
   dateRange?: DateRange | null;
   groupBy?: "calendar_name" | "month" | null;
@@ -31,7 +38,8 @@ type QueryResult = { answer: string; columns: string[]; rows: Record<string, unk
 type IntentSource = "fast-path" | "openai";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
-const MAX_ROWS = 100;
+const DEFAULT_ROW_LIMIT = 50;
+const MAX_ROW_LIMIT = 100;
 
 const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD" });
 
@@ -119,8 +127,9 @@ Distinguish date basis, grouping dimension, and metric source. "By appointment d
 Revenue rules: if the user says bank revenue, use bank_revenue; if the user says Acuity revenue, Acuity appointment value, or appointment value, use acuity_value; if the user says both revenue types, use both. Ask revenue clarification only for unsourced "revenue".
 Booking rules: default dateBasis to appointment_datetime. Clarify booking date basis only when the user asks to compare/group bookings by date but does not say appointment date or booking created date. Booking counts default to non-cancelled Acuity appointments.
 Mixed monthly summaries: expenses are bank debits; bank revenue is bank credits; bookings are Acuity counts. If grouped by calendar_name/room type, grouping applies only to Acuity booking counts unless explicit reconciliation data exists; do not allocate bank revenue or expenses by calendar_name.
-If a month is given without a year, ask which year. Treat year phrases like "in the year 2026", "for 2026", "during 2026", and "2026 total" as an explicit dateRange from 2026-01-01 to exclusive 2027-01-01. If users ask for total debit and credit / credits and debits / expenses and revenue, use bank_movement_summary with mode total so both sides and net movement are returned, not transaction rows.
-Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|bank_movement_summary|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
+If a month is given without a year, ask which year. Treat year phrases like "in the year 2026", "for 2026", "during 2026", and "2026 total" as an explicit dateRange from 2026-01-01 to exclusive 2027-01-01. If users ask for total debit and credit / credits and debits / expenses and revenue, use bank_movement_summary with transactionType both, metricMode summary, resultMode aggregate_only so both sides and net movement are returned, not transaction rows.
+Bank transaction intents must include transactionType (credit|debit|both), metricMode (total|count|list|summary), resultMode (aggregate_only|rows_only|aggregate_with_rows), rowLimit (default 50 for row outputs), searchText, and dateRange. Preserve named vendors/sources/people/references (for example Stripe, Grab, Muhammad, rent, PayNow, FAST PAYMENT) as searchText for bank credits/debits and payments from a person/source. Aggregate wording (how much, total, sum, summary, overall, amount) means aggregate_only. Row/detail wording (show all, list, details, transactions, show payments, tell me all payments) means aggregate_with_rows and must still include aggregate count and amount. Ask for clarification for unsourced "revenue".
+Intent shape: {"type":"intent","intent":"bank_credits|bank_debits|bank_movement_summary|acuity_booking_count|acuity_booking_by_room_type|monthly_summary","mode":"total|list|both","transactionType":"credit|debit|both","metricMode":"total|count|list|summary","resultMode":"aggregate_only|rows_only|aggregate_with_rows","rowLimit":number,"searchText":string|null,"dateRange":{"type":"explicit","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}|{"type":"last_months","months":number}|{"type":"month","month":1-12,"year":number}|null,"groupBy":"calendar_name|month"|null,"dateBasis":"appointment_datetime|created_datetime"|null,"includeAcuityValue":boolean,"revenueMetric":"bank_revenue|acuity_value|both"|null}`;
 
 const MONTHS: Record<string, number> = {
   january: 1,
@@ -149,6 +158,31 @@ const MONTHS: Record<string, number> = {
   dec: 12,
 };
 
+function hasAggregateWording(question: string) {
+  return /\b(how much|total|sum|summary|summar(?:y|ise|ize)|overall|amount)\b/i.test(question);
+}
+
+function hasRowWording(question: string) {
+  return /\b(show all|list|details?|transactions?|show payments?|tell me all payments?)\b/i.test(question);
+}
+
+function hasDateWording(question: string) {
+  return /\b(20\d{2}|this\s+(?:month|year)|last\s+month|past\s+\d{1,2}\s+months?|last\s+\d{1,2}\s+months?|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(question);
+}
+
+function resultShapeFromQuestion(question: string): { metricMode: MetricMode; resultMode: ResultMode; mode: "total" | "list" | "both" } {
+  const aggregate = hasAggregateWording(question);
+  const rows = hasRowWording(question);
+  if (rows && !aggregate) return { metricMode: "list", resultMode: "aggregate_with_rows", mode: "list" };
+  return { metricMode: "total", resultMode: "aggregate_only", mode: "total" };
+}
+
+function normalizeRowLimit(rowLimit: unknown, resultMode?: ResultMode) {
+  if (resultMode === "aggregate_only") return 0;
+  if (!Number.isInteger(rowLimit)) return DEFAULT_ROW_LIMIT;
+  return Math.min(Math.max(Number(rowLimit), 1), MAX_ROW_LIMIT);
+}
+
 function parseFastPathIntent(question: string): ModelOutput | null {
   const normalized = question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim();
   const dateRange = parseFastPathDateRange(normalized);
@@ -160,10 +194,14 @@ function parseFastPathIntent(question: string): ModelOutput | null {
   const unsourcedRevenue = /\brevenues?\b/.test(normalized) && !revenueMetric && !/\bbank revenue\b/.test(normalized);
   const dateBasis = detectAcuityDateBasis(question);
   const groupBy = detectGrouping(question);
-  const wantsTotalSummary = /\b(how much total|total|summary|summar(?:y|ise|ize))\b/.test(normalized);
+  const wantsTotalSummary = hasAggregateWording(normalized);
+  const wantsRows = hasRowWording(normalized);
 
   if (hasMonthWithoutYear(normalized)) {
     return { type: "clarification", question: "Which month and year should I use?" };
+  }
+  if (!dateRange && hasDateWording(normalized)) {
+    return { type: "clarification", question: "What exact date range should I use?" };
   }
   if (!hasDate && !/\b(bank revenue|credits?|debits?|expenses?|payments?)\b/.test(normalized)) return null;
   if (/\bbookings?\s+by\s+date\b/.test(normalized) && !dateBasis) return null;
@@ -173,7 +211,7 @@ function parseFastPathIntent(question: string): ModelOutput | null {
     return {
       type: "intent",
       intent: groupBy ? "acuity_booking_by_room_type" : "acuity_booking_count",
-      mode: /\b(show|list)\b/.test(normalized) && !wantsTotalSummary ? "list" : "total",
+      mode: wantsRows && !wantsTotalSummary ? "list" : "total",
       dateRange,
       groupBy,
       dateBasis: dateBasis ?? "appointment_datetime",
@@ -189,6 +227,10 @@ function parseFastPathIntent(question: string): ModelOutput | null {
       type: "intent",
       intent: "bank_movement_summary",
       mode: "total",
+      transactionType: "both",
+      metricMode: "summary",
+      resultMode: "aggregate_only",
+      rowLimit: DEFAULT_ROW_LIMIT,
       dateRange,
       groupBy: null,
       dateBasis: null,
@@ -220,7 +262,11 @@ function parseFastPathIntent(question: string): ModelOutput | null {
     return {
       type: "intent",
       intent: "bank_credits",
-      mode: /\b(show|list|tell me)\b/.test(normalized) && !wantsTotalSummary ? "list" : "total",
+      mode: wantsRows && !wantsTotalSummary ? "list" : "total",
+      transactionType: "credit",
+      metricMode: wantsRows && !wantsTotalSummary ? "list" : "total",
+      resultMode: wantsRows && !wantsTotalSummary ? "aggregate_with_rows" : "aggregate_only",
+      rowLimit: DEFAULT_ROW_LIMIT,
       dateRange,
       searchText: extractBankSearchText(question, "credit"),
       groupBy: null,
@@ -233,7 +279,11 @@ function parseFastPathIntent(question: string): ModelOutput | null {
     return {
       type: "intent",
       intent: "bank_debits",
-      mode: /\b(show|list)\b/.test(normalized) ? "list" : "total",
+      mode: wantsRows && !wantsTotalSummary ? "list" : "total",
+      transactionType: "debit",
+      metricMode: wantsRows && !wantsTotalSummary ? "list" : "total",
+      resultMode: wantsRows && !wantsTotalSummary ? "aggregate_with_rows" : "aggregate_only",
+      rowLimit: DEFAULT_ROW_LIMIT,
       dateRange,
       searchText: extractBankSearchText(question, "debit"),
       groupBy: null,
@@ -288,8 +338,8 @@ function extractBankSearchText(question: string, kind: "credit" | "debit") {
   const source = question.match(sourcePattern)?.[1]?.trim();
   if (source && !/^(may|june?|july?|jan|feb|mar|apr|aug|sep|oct|nov|dec)\b/i.test(source)) return source;
 
-  const beforeMetric = question.match(new RegExp(`\\\\b(?:show|list|total|how many|how much)\\\\s+(.+?)\\\\s+(?:${kind === "credit" ? "credits?|payments?|bank revenue" : "debits?|expenses?"})\\\\b`, "i"))?.[1]?.trim();
-  if (beforeMetric && !/^(bank|the|me)$/i.test(beforeMetric)) return beforeMetric.replace(/^(all|the)\s+/i, "");
+  const beforeMetric = question.match(new RegExp(`(?:\\b(?:show|show all|list|total|sum|how many|how much|tell me all)\\s+)?(.+?)\\s+(?:${kind === "credit" ? "credits?|payments?|bank revenue" : "debits?|expenses?"})\\b`, "i"))?.[1]?.trim();
+  if (beforeMetric && !/^(bank|the|me|all)$/i.test(beforeMetric)) return beforeMetric.replace(/^(all|the)\s+/i, "");
   return null;
 }
 
@@ -303,10 +353,32 @@ function normalizeModelOutput(output: ModelOutput, question: string): ModelOutpu
   const parsedDateRange = parseFastPathDateRange(question.toLowerCase().replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim());
 
   if (parsedDateRange) normalized.dateRange = parsedDateRange;
-  if (/\b(debits?|expenses?)\b/i.test(question) && /\b(credits?|bank revenue|payments?)\b/i.test(question) && !/\b(bookings?|appointments?|acuity)\b/i.test(question)) {
+
+  const shape = resultShapeFromQuestion(question);
+  const isBankTransactionIntent = normalized.intent === "bank_credits" || normalized.intent === "bank_debits" || normalized.intent === "bank_movement_summary";
+  if (isBankTransactionIntent) {
+    normalized.mode = shape.mode;
+    normalized.metricMode = normalized.intent === "bank_movement_summary" ? "summary" : shape.metricMode;
+    normalized.resultMode = normalized.intent === "bank_movement_summary" && !hasRowWording(question) ? "aggregate_only" : shape.resultMode;
+    normalized.rowLimit = normalizeRowLimit(normalized.rowLimit, normalized.resultMode);
+  }
+
+  if (/\b(debits?|expenses?)\b/i.test(question) && /\b(credits?|bank revenue|payments?|revenues?)\b/i.test(question) && !/\b(bookings?|appointments?|acuity)\b/i.test(question)) {
     normalized.intent = "bank_movement_summary";
-    normalized.mode = "total";
+    normalized.transactionType = "both";
+    normalized.metricMode = "summary";
+    normalized.resultMode = hasRowWording(question) ? "aggregate_with_rows" : "aggregate_only";
+    normalized.mode = normalized.resultMode === "aggregate_only" ? "total" : "list";
+    normalized.rowLimit = normalizeRowLimit(normalized.rowLimit, normalized.resultMode);
     normalized.searchText = null;
+  }
+
+  if (normalized.intent === "bank_credits") normalized.transactionType = "credit";
+  if (normalized.intent === "bank_debits") normalized.transactionType = "debit";
+  if (normalized.intent === "bank_movement_summary") normalized.transactionType = "both";
+
+  if ((normalized.intent === "bank_credits" || normalized.intent === "bank_debits") && !normalized.searchText) {
+    normalized.searchText = extractBankSearchText(question, normalized.intent === "bank_credits" ? "credit" : "debit");
   }
 
   if (source) normalized.revenueMetric = source;
@@ -377,8 +449,16 @@ function validateIntent(intent: Intent, question = ""): Clarification | null {
   if (needsBookingDateBasisClarification(intent, question)) {
     return { type: "clarification", question: "For bookings by date, should I use appointment date or booking created date?", options: ["Appointment date", "Booking created date"] };
   }
-  if (intent.intent === "monthly_summary" && !intent.revenueMetric && hasUnsourcedRevenue(question)) {
+  if (hasUnsourcedRevenue(question) && !intent.revenueMetric) {
     return { type: "clarification", question: "For revenue, do you mean bank revenue, Acuity appointment value, or both?", options: ["Bank revenue", "Acuity appointment value", "Both"] };
+  }
+  if (intent.intent === "bank_credits" || intent.intent === "bank_debits" || intent.intent === "bank_movement_summary") {
+    if (!intent.transactionType || !["credit", "debit", "both"].includes(intent.transactionType)) {
+      return { type: "clarification", question: "Should I look at bank credits, bank debits, or both?", options: ["Credits", "Debits", "Both"] };
+    }
+    if (intent.dateRange && intent.dateRange.type === "explicit" && intent.dateRange.start >= intent.dateRange.end) {
+      return { type: "clarification", question: "What exact date range should I use?" };
+    }
   }
   return null;
 }
@@ -445,25 +525,44 @@ async function runApprovedQuery(intent: Intent): Promise<QueryResult> {
 async function runBank(intent: Intent, kind: "credit" | "debit"): Promise<QueryResult> {
   const dateFilter = getDateSql(intent.dateRange, sql`transaction_date`);
   const search = intent.searchText?.trim();
-  const rows = await sql<Record<string, unknown>[]>`
-    select transaction_date::text, description_1, description_2, ${kind === "credit" ? sql`credit::text as credit` : sql`debit::text as debit`}
-    from bank_transactions
-    where ${kind === "credit" ? sql`credit` : sql`debit`} > 0
-      ${dateFilter}
-      ${search ? sql`and (description_1 ilike ${`%${search}%`} or description_2 ilike ${`%${search}%`})` : sql``}
-    order by transaction_date desc
-    limit ${MAX_ROWS}
-  `;
+  const amountColumn = kind === "credit" ? sql`credit` : sql`debit`;
+  const label = kind === "credit" ? "credits" : "debits";
+  const resultMode = intent.resultMode ?? (intent.mode === "list" ? "aggregate_with_rows" : "aggregate_only");
+  const rowLimit = normalizeRowLimit(intent.rowLimit, resultMode);
+
   const totals = await sql<{ total: string | null; count: number }[]>`
-    select coalesce(sum(${kind === "credit" ? sql`credit` : sql`debit`}), 0)::text as total, count(*)::int as count
+    select coalesce(sum(${amountColumn}), 0)::text as total, count(*)::int as count
     from bank_transactions
-    where ${kind === "credit" ? sql`credit` : sql`debit`} > 0
+    where ${amountColumn} > 0
       ${dateFilter}
       ${search ? sql`and (description_1 ilike ${`%${search}%`} or description_2 ilike ${`%${search}%`})` : sql``}
   `;
   const total = Number(totals[0]?.total ?? 0);
-  const label = kind === "credit" ? "credits" : "debits";
-  return { answer: `I found ${totals[0]?.count ?? 0} bank ${label}${search ? ` matching “${search}”` : ""} for ${dateLabel(intent.dateRange)}, totaling ${money.format(total)}.`, columns: ["transaction_date", "description_1", "description_2", kind], rows };
+  const count = totals[0]?.count ?? 0;
+
+  if (resultMode === "aggregate_only") {
+    return {
+      answer: `I found ${count} bank ${label}${search ? ` matching “${search}”` : ""} for ${dateLabel(intent.dateRange)}, totaling ${money.format(total)}.`,
+      columns: ["period", "transaction_type", "search_text", "transaction_count", "total_amount"],
+      rows: [{ period: dateLabel(intent.dateRange), transaction_type: label, search_text: search ?? null, transaction_count: count, total_amount: total.toString() }],
+    };
+  }
+
+  const rows = await sql<Record<string, unknown>[]>`
+    select transaction_date::text, description_1, description_2, ${kind === "credit" ? sql`credit::text as credit` : sql`debit::text as debit`}
+    from bank_transactions
+    where ${amountColumn} > 0
+      ${dateFilter}
+      ${search ? sql`and (description_1 ilike ${`%${search}%`} or description_2 ilike ${`%${search}%`})` : sql``}
+    order by transaction_date desc
+    limit ${rowLimit}
+  `;
+  const capped = count > rows.length;
+  return {
+    answer: `I found ${count} bank ${label}${search ? ` matching “${search}”` : ""} for ${dateLabel(intent.dateRange)}, totaling ${money.format(total)}. Showing ${capped ? `the most recent ${rows.length} of ${count}` : rows.length} matching transaction row${rows.length === 1 ? "" : "s"}, newest first${capped ? ` (capped at ${rowLimit})` : ""}.`,
+    columns: ["transaction_date", "description_1", "description_2", kind],
+    rows,
+  };
 }
 
 async function runBankMovementSummary(intent: Intent): Promise<QueryResult> {
