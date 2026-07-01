@@ -1,4 +1,4 @@
-import { semanticModel } from "./semantic-model";
+import { semanticModel, type DateBasis } from "./semantic-model";
 import type { ParsedDateMention } from "./date-parser";
 import { isComparisonQuery, normalizeRowLimit, type ComparisonQuery, type SemanticQuery, type SemanticQueryPayload } from "./semantic-query";
 
@@ -10,13 +10,13 @@ const SHARED_COMPARISON_DIMENSIONS = new Set(["month", "year"]);
 
 export function validateAndNormalizeSemanticQuery(raw: SemanticQueryPayload, question: string, parsedDate: ParsedDateMention): ValidationResult {
   if (parsedDate.dateMentioned && !parsedDate.parseable) return { type: "clarification", question: "What exact date range should I use?" };
-  if (isComparisonQuery(raw)) return validateComparisonQuery(raw, parsedDate);
+  if (isComparisonQuery(raw)) return validateComparisonQuery(raw, question, parsedDate);
   if (raw?.clarification?.needed) return { type: "clarification", question: raw.clarification.question, options: raw.clarification.options };
   if (isUnsourcedRevenue(question)) return REVENUE_CLARIFICATION;
   return validateSingleQuery(raw, question, parsedDate);
 }
 
-function validateComparisonQuery(raw: ComparisonQuery, parsedDate: ParsedDateMention): ValidationResult {
+function validateComparisonQuery(raw: ComparisonQuery, question: string, parsedDate: ParsedDateMention): ValidationResult {
   if (raw.clarification?.needed) return { type: "clarification", question: raw.clarification.question, options: raw.clarification.options };
   if (!Array.isArray(raw.queries) || raw.queries.length < 2) return { type: "clarification", question: "Which bank and Acuity metrics should I compare?" };
 
@@ -30,7 +30,7 @@ function validateComparisonQuery(raw: ComparisonQuery, parsedDate: ParsedDateMen
 
   const queries: SemanticQuery[] = [];
   for (const child of raw.queries) {
-    const normalized = normalizeSingleQuery(child, parsedDate, "aggregate_only", sharedDimensions);
+    const normalized = normalizeSingleQuery(child, parsedDate, "aggregate_only", sharedDimensions, question);
     if (!normalized || normalized.metrics.length === 0) return { type: "clarification", question: "Which metrics should I compare?" };
     queries.push(normalized);
   }
@@ -48,7 +48,7 @@ function validateComparisonQuery(raw: ComparisonQuery, parsedDate: ParsedDateMen
 }
 
 function validateSingleQuery(raw: SemanticQuery, question: string, parsedDate: ParsedDateMention): ValidationResult {
-  const query = normalizeSingleQuery(raw, parsedDate);
+  const query = normalizeSingleQuery(raw, parsedDate, undefined, undefined, question);
   if (!query) return { type: "clarification", question: "Should I look at bank transactions or Acuity bookings?", options: ["Bank", "Acuity"] };
   if (query.metrics.length === 0) return { type: "clarification", question: `Which ${raw.domain === "bank" ? "bank" : "Acuity"} metric should I use?` };
   if (query.domain === "bank" && isCombinedBankMovement(query.metrics) && !hasRowWording(question)) query.resultMode = "aggregate_only";
@@ -56,19 +56,20 @@ function validateSingleQuery(raw: SemanticQuery, question: string, parsedDate: P
   return { type: "query", query };
 }
 
-function normalizeSingleQuery(raw: SemanticQuery, parsedDate: ParsedDateMention, forcedResultMode?: SemanticQuery["resultMode"], forcedDimensions?: string[]): SemanticQuery | null {
+function normalizeSingleQuery(raw: SemanticQuery, parsedDate: ParsedDateMention, forcedResultMode?: SemanticQuery["resultMode"], forcedDimensions?: string[], question?: string): SemanticQuery | null {
   if (!raw || (raw.domain !== "bank" && raw.domain !== "acuity")) return null;
   const model = semanticModel[raw.domain];
   const metrics = Array.isArray(raw.metrics) ? raw.metrics.filter((metric) => metric in model.metrics) : [];
   if (raw.domain === "bank" && metrics.includes("bank_credits") && metrics.includes("bank_debits") && !metrics.includes("net_movement")) metrics.push("net_movement");
   const requestedDimensions = forcedDimensions ?? raw.dimensions ?? [];
   const dimensions = Array.isArray(requestedDimensions) ? requestedDimensions.filter((dimension) => dimension in model.dimensions) : [];
+  if (!dimensions.length && shouldImplyMonthlyDateGrouping(raw.domain, question, parsedDate)) dimensions.push("month");
 
   const query: SemanticQuery = {
     domain: raw.domain,
     metrics,
     dimensions,
-    filters: { ...raw.filters, dateBasis: raw.filters?.dateBasis ?? model.defaultDateBasis as NonNullable<SemanticQuery["filters"]>["dateBasis"] },
+    filters: { ...raw.filters, dateBasis: inferredDateBasis(raw.domain, question) ?? raw.filters?.dateBasis ?? model.defaultDateBasis as NonNullable<SemanticQuery["filters"]>["dateBasis"] },
     dateRange: parsedDate.parseable ? parsedDate.dateRange : raw.dateRange ?? null,
     resultMode: forcedResultMode ?? (raw.resultMode === "rows_only" || raw.resultMode === "aggregate_with_rows" ? raw.resultMode : "aggregate_only"),
   };
@@ -80,9 +81,21 @@ function normalizeSingleQuery(raw: SemanticQuery, parsedDate: ParsedDateMention,
   return query;
 }
 
-function normalizeDateBasis(domain: SemanticQuery["domain"], dateBasis: unknown) {
-  if (domain === "bank") return dateBasis === "value_date" ? "value_date" : "transaction_date";
-  return dateBasis === "created_datetime" ? "created_datetime" : "appointment_datetime";
+function normalizeDateBasis(domain: SemanticQuery["domain"], dateBasis: unknown): DateBasis {
+  const model = semanticModel[domain];
+  return typeof dateBasis === "string" && model.allowedDateBases.includes(dateBasis as DateBasis) ? dateBasis as DateBasis : model.defaultDateBasis;
+}
+function inferredDateBasis(domain: SemanticQuery["domain"], question?: string): DateBasis | null {
+  if (!question) return null;
+  const q = question.toLowerCase();
+  if (domain === "bank") return /\bvalue date\b/.test(q) ? "value_date" : null;
+  if (/\b(?:appointment date|session date|appointments? happening|sessions? happening|bookings? happening)\b/.test(q)) return "appointment_datetime";
+  if (/\b(?:booking date|booked date|created date|created_datetime|booking created date|bookings? created|bookings? made|new bookings?|when bookings? were made|booked in)\b/.test(q)) return "created_datetime";
+  return null;
+}
+function shouldImplyMonthlyDateGrouping(domain: SemanticQuery["domain"], question: string | undefined, parsedDate: ParsedDateMention): boolean {
+  if (domain !== "acuity" || !question || parsedDate.dateRange?.label?.length !== 4) return false;
+  return /\bby\s+(?:booking|booked|created|appointment|session)\s+date\b/i.test(question);
 }
 function normalizeTransactionType(metrics: string[], transactionType: unknown) {
   if (transactionType === "credit" || transactionType === "debit" || transactionType === "both") return transactionType;
