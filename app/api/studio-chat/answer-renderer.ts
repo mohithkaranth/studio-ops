@@ -1,11 +1,15 @@
-import type { SemanticQuery } from "./semantic-query";
+import { isComparisonQuery, type SemanticQueryPayload } from "./semantic-query";
 import type { ShapedResult } from "./result-shaper";
 
 export type ChatAnswer = { answer: string; columns: string[]; rows: Record<string, unknown>[] };
 
 const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD" });
 
-export function renderAnswer(query: SemanticQuery, result: ShapedResult): ChatAnswer {
+export function renderAnswer(query: SemanticQueryPayload, result: ShapedResult): ChatAnswer {
+  if (isComparisonQuery(query)) {
+    const rows = result.aggregateRows ?? [];
+    return { answer: `Found ${rows.length} comparison ${rows.length === 1 ? "result" : "results"}.`, columns: columnsFor(rows), rows };
+  }
   if (query.resultMode === "aggregate_only") {
     const rows = result.aggregateRows ?? [];
     return { answer: `Found ${rows.length} aggregate ${rows.length === 1 ? "result" : "results"}.`, columns: columnsFor(rows), rows };
