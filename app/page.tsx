@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { tryAutoSyncAcuityAppointmentsOnAppOpen } from "@/lib/acuity/auto-sync";
 import AcuityDashboardCharts from "@/app/components/AcuityDashboardCharts";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ type ClientPoint = { client_name: string; booking_count: number };
 type CalendarMonthPoint = { month_label: string; calendar_name: string; booking_count: number };
 
 export default async function Home() {
+  await tryAutoSyncAcuityAppointmentsOnAppOpen();
+
   const [appointmentMonthly, bookingCreatedMonthly, topClients, calendarMonthly] = await Promise.all([
     sql<Point[]>`select date_trunc('month', appointment_datetime) as month_start,to_char(date_trunc('month', appointment_datetime), 'Mon-YY') as month_label,count(*)::int as booking_count from acuity_appointments where appointment_datetime is not null and appointment_datetime >= date_trunc('month', current_date) - interval '11 months' group by month_start, month_label order by month_start;`,
     sql<Point[]>`select date_trunc('month', created_datetime) as month_start,to_char(date_trunc('month', created_datetime), 'Mon-YY') as month_label,count(*)::int as booking_count from acuity_appointments where created_datetime is not null and created_datetime >= date_trunc('month', current_date) - interval '11 months' group by month_start, month_label order by month_start;`,
