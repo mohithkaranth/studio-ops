@@ -7,6 +7,13 @@ export type BuiltQuery = Promise<Record<string, unknown>[]>;
 
 type SqlParts = { where: string[]; params: (string | number)[] };
 
+const ACUITY_REPORT_TIME_ZONE = "Asia/Singapore";
+
+function runUnsafe(queryText: string, params: (string | number)[]): BuiltQuery {
+  console.info("Studio Chat generated SQL", { sql: queryText, params });
+  return sql.unsafe(queryText, params) as BuiltQuery;
+}
+
 export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
   const model = semanticModel[query.domain];
   const dimensions = query.dimensions ?? [];
@@ -19,7 +26,7 @@ export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
   const parts = buildWhere(query);
   const groupBy = dimensions.length ? ` GROUP BY ${dimensions.map((_, i) => i + 1).join(", ")}` : "";
   const orderBy = dimensions.length ? ` ORDER BY ${dimensions.map((_, i) => i + 1).join(", ")}` : "";
-  return sql.unsafe(`SELECT ${select.join(", ")} FROM ${model.table}${whereSql(parts.where)}${groupBy}${orderBy}`, parts.params) as BuiltQuery;
+  return runUnsafe(`SELECT ${select.join(", ")} FROM ${model.table}${whereSql(parts.where)}${groupBy}${orderBy}`, parts.params);
 }
 
 export function buildRowsQuery(query: SemanticQuery): BuiltQuery {
@@ -28,18 +35,18 @@ export function buildRowsQuery(query: SemanticQuery): BuiltQuery {
   const parts = buildWhere(query);
   parts.params.push(query.rowLimit);
   const orderDate = selectedDateBasis(query);
-  return sql.unsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)} ORDER BY ${orderDate} DESC, id DESC LIMIT $${parts.params.length}`, parts.params) as BuiltQuery;
+  return runUnsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)} ORDER BY ${orderDate} DESC, id DESC LIMIT $${parts.params.length}`, parts.params);
 }
 
 export function buildRowSummaryQuery(query: SemanticQuery): BuiltQuery {
   if (query.domain === "acuity") {
     const parts = buildWhere(query);
-    return sql.unsafe(`SELECT COUNT(*) AS total_count FROM acuity_appointments${whereSql(parts.where)}`, parts.params) as BuiltQuery;
+    return runUnsafe(`SELECT COUNT(*) AS total_count FROM acuity_appointments${whereSql(parts.where)}`, parts.params);
   }
 
   if (query.domain !== "bank") throw new Error("Bank row summary is only supported for bank queries");
   const parts = buildWhere(query);
-  return sql.unsafe(`SELECT COUNT(*) AS total_count, SUM(COALESCE(credit, 0)) AS total_credit, SUM(COALESCE(debit, 0)) AS total_debit, SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement FROM bank_transactions${whereSql(parts.where)}`, parts.params) as BuiltQuery;
+  return runUnsafe(`SELECT COUNT(*) AS total_count, SUM(COALESCE(credit, 0)) AS total_credit, SUM(COALESCE(debit, 0)) AS total_debit, SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement FROM bank_transactions${whereSql(parts.where)}`, parts.params);
 }
 
 function buildWhere(query: SemanticQuery): SqlParts {
@@ -48,9 +55,11 @@ function buildWhere(query: SemanticQuery): SqlParts {
   const dateBasis = selectedDateBasis(query);
   if (query.dateRange) {
     params.push(query.dateRange.startDate);
-    where.push(`${dateBasis} >= $${params.length}`);
+    const startPlaceholder = datePlaceholder(query.domain, params.length);
+    where.push(`${dateBasis} >= ${startPlaceholder}`);
     params.push(query.dateRange.endDateExclusive);
-    where.push(`${dateBasis} < $${params.length}`);
+    const endPlaceholder = datePlaceholder(query.domain, params.length);
+    where.push(`${dateBasis} < ${endPlaceholder}`);
   }
   const metricFilters = defaultMetricFilters(query);
   where.push(...metricFilters);
@@ -68,20 +77,35 @@ function buildWhere(query: SemanticQuery): SqlParts {
   }
 
   if (query.domain === "acuity") {
-    const terms = acuityClientSearchTerms(query.filters?.searchText);
-    for (const term of terms) {
-      params.push(`%${term}%`);
-      const placeholder = `$${params.length}`;
-      where.push(`(${acuityClientSearchExpressions().map((expression) => `${expression} ILIKE ${placeholder}`).join(" OR ")})`);
-    }
+    const clientWhere = buildAcuityClientWhere(query.filters?.searchText, params);
+    if (clientWhere) where.push(clientWhere);
   }
   return { where, params };
 }
-function acuityClientSearchExpressions(): string[] {
-  return [
-    ...(semanticModel.acuity.searchTextFields ?? []),
-    "COALESCE(NULLIF(trim(client_first_name || ' ' || client_last_name), ''), client_email, 'Unknown')",
-  ];
+function buildAcuityClientWhere(searchText: string | null | undefined, params: (string | number)[]): string | null {
+  const terms = acuityClientSearchTerms(searchText);
+  if (!terms.length) return null;
+
+  const expressions: string[] = [];
+  if (terms.length > 1) {
+    params.push(`%${terms.join(" ")}%`);
+    expressions.push(`LOWER(CONCAT_WS(' ', client_first_name, client_last_name)) LIKE $${params.length}`);
+  }
+
+  for (const term of terms) {
+    params.push(`%${term}%`);
+    const placeholder = `$${params.length}`;
+    expressions.push(`LOWER(client_first_name) LIKE ${placeholder}`);
+    expressions.push(`LOWER(client_last_name) LIKE ${placeholder}`);
+    expressions.push(`LOWER(client_email) LIKE ${placeholder}`);
+  }
+
+  return `(${expressions.join(" OR ")})`;
+}
+
+function datePlaceholder(domain: SemanticQuery["domain"], paramIndex: number): string {
+  if (domain !== "acuity") return `$${paramIndex}`;
+  return `($${paramIndex}::date::timestamp AT TIME ZONE '${ACUITY_REPORT_TIME_ZONE}')`;
 }
 
 function whereSql(where: string[]) { return where.length ? ` WHERE ${where.join(" AND ")}` : ""; }
