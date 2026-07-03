@@ -54,7 +54,9 @@ function validateSingleQuery(raw: SemanticQuery, question: string, parsedDate: P
   applyDeterministicRouting(query, question);
   if (query.metrics.length === 0) return { type: "clarification", question: `Which ${query.domain === "bank" ? "bank" : "Acuity"} metric should I use?` };
   if (query.domain === "bank" && isCombinedBankMovement(query.metrics) && !hasBankRowWording(question)) query.resultMode = "aggregate_only";
-  query.rowLimit = normalizeRowLimit(query.resultMode, raw.rowLimit);
+  applyAdvancedAggregateIntent(query, question);
+  if (query.resultMode === "aggregate_only" && !isTopQuestion(question)) query.rowLimit = 0;
+  else query.rowLimit = query.resultMode === "aggregate_only" ? Math.min(Math.max(Math.trunc(Number(query.rowLimit ?? raw.rowLimit ?? 10)), 1), 100) : normalizeRowLimit(query.resultMode, query.rowLimit ?? raw.rowLimit);
   return { type: "query", query };
 }
 
@@ -107,6 +109,54 @@ function normalizeTransactionType(metrics: string[], transactionType: unknown) {
   return "both";
 }
 function isCombinedBankMovement(metrics: string[]) { return metrics.includes("net_movement") || (metrics.includes("bank_credits") && metrics.includes("bank_debits")); }
+function applyAdvancedAggregateIntent(query: SemanticQuery, question: string) {
+  const q = question.toLowerCase();
+  const topLimit = topN(q);
+  const aggregate = aggregatePrefix(q);
+
+  if (query.domain === "acuity") {
+    if (/\b(?:booking|appointment)\s+(?:price|value)|\bprice\b/.test(q) && aggregate) query.metrics = [`${aggregate}_booking_price`];
+    if (/(?:by|top)\s+(?:clients?|customers?)/.test(q)) query.dimensions = ["client_name"];
+    if (/(?:by|top)\s+(?:rooms?|calendars?)/.test(q)) query.dimensions = ["calendar_name"];
+    if (/(?:by|top)\s+(?:appointment|booking)\s+types?/.test(q)) query.dimensions = ["appointment_type_name"];
+    if (topLimit && (query.dimensions ?? []).length) {
+      query.resultMode = "aggregate_only";
+      query.rowLimit = topLimit;
+      query.metrics = /\b(?:revenue|value|price)\b/.test(q) ? ["booking_value"] : ["booking_count"];
+      query.orderBy = { field: query.metrics[0], direction: "desc" };
+    }
+  }
+
+  if (query.domain === "bank") {
+    const subject = /\bdebits?\b/.test(q) ? "debit" : /\b(?:net movement|movement)\b/.test(q) ? "net_movement" : "credit";
+    if (aggregate && subject === "credit") query.metrics = [`${aggregate}_bank_credit`];
+    if (aggregate && subject === "debit") query.metrics = [`${aggregate}_bank_debit`];
+    if (aggregate && subject === "net_movement") query.metrics = [`${aggregate}_net_movement`];
+    if (topLimit && /\b(?:credits?|debits?)\b/.test(q)) {
+      query.resultMode = "rows_only";
+      query.rowLimit = topLimit;
+      query.filters = { ...query.filters, transactionType: subject === "debit" ? "debit" : "credit" };
+      query.metrics = subject === "debit" ? ["bank_debits"] : ["bank_credits"];
+      query.orderBy = { field: subject === "debit" ? "debit" : "credit", direction: "desc" };
+    }
+  }
+
+  if (/\b(?:by month|monthly)\b/.test(q) && !(query.dimensions ?? []).includes("month")) query.dimensions = [ ...(query.dimensions ?? []), "month" ];
+}
+
+function aggregatePrefix(question: string): "average" | "highest" | "lowest" | null {
+  if (/\b(?:average|avg|mean)\b/.test(question)) return "average";
+  if (/\b(?:maximum|max|highest|largest|biggest)\b/.test(question)) return "highest";
+  if (/\b(?:minimum|min|lowest|smallest)\b/.test(question)) return "lowest";
+  return null;
+}
+function topN(question: string): number | null {
+  if (!/\btop\b/.test(question)) return null;
+  const match = /\btop\s+(\d{1,3})\b/.exec(question);
+  return Math.min(Math.max(match ? Number(match[1]) : 10, 1), 100);
+}
+function isTopQuestion(question: string) { return /\btop\b/i.test(question); }
+
 function applyDeterministicRouting(query: SemanticQuery, question: string) {
   if (hasAcuityDetailWording(question)) {
     query.domain = "acuity";

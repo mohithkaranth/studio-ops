@@ -38,8 +38,19 @@ function aggregateAnswer(query: SemanticQueryPayload, rows: Record<string, unkno
     const count = Number(rows[0]?.booking_count ?? 0);
     return `Total bookings${scopeLabel(query)}: ${count}.`;
   }
+  if (!isComparisonQuery(query) && query.orderBy && (query.dimensions ?? []).length) return `Here are the top ${query.rowLimit ?? rows.length} ${topNoun(query)}${scopeLabel(query)}.`;
   if (!isComparisonQuery(query) && query.domain === "acuity" && (query.dimensions ?? []).length) {
     return `Found ${rows.length} aggregate ${rows.length === 1 ? "result" : "results"}${dateBasisSuffix(query)}.`;
+  }
+  if (!isComparisonQuery(query) && !(query.dimensions ?? []).length && query.metrics.length === 1) {
+    const metric = query.metrics[0];
+    const value = Number(rows[0]?.[metric] ?? 0);
+    if (metric === "average_booking_price") return `For${scopeLabel(query)}, the average booking price was ${money.format(value)}.`;
+    if (metric === "highest_booking_price") return `For${scopeLabel(query)}, the highest booking price was ${money.format(value)}.`;
+    if (metric === "lowest_booking_price") return `For${scopeLabel(query)}, the lowest booking price was ${money.format(value)}.`;
+    if (metric === "average_bank_credit") return `For${scopeLabel(query)}, the average bank credit was ${money.format(value)}.`;
+    if (metric === "highest_bank_credit") return `For${scopeLabel(query)}, the highest bank credit was ${money.format(value)}.`;
+    if (metric === "lowest_bank_debit") return `For${scopeLabel(query)}, the lowest bank debit was ${money.format(value)}.`;
   }
   return `Found ${rows.length} aggregate ${rows.length === 1 ? "result" : "results"}.`;
 }
@@ -50,6 +61,13 @@ function scopeLabel(query: SemanticQueryPayload): string {
   if (query.filters?.searchText) parts.push(`for ${query.filters.searchText}`);
   if (query.dateRange?.label) parts.push(`for ${query.dateRange.label}`);
   return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
+function topNoun(query: Exclude<SemanticQueryPayload, { kind: "comparison" }>): string {
+  if ((query.dimensions ?? []).includes("client_name")) return "clients";
+  if ((query.dimensions ?? []).includes("calendar_name")) return "rooms";
+  if ((query.dimensions ?? []).includes("appointment_type_name")) return "appointment types";
+  return "results";
 }
 
 function dateBasisSuffix(query: SemanticQueryPayload): string {
