@@ -1,6 +1,6 @@
 import { isComparisonQuery, type ComparisonQuery, type SemanticQuery, type SemanticQueryPayload } from "./semantic-query";
 import { sortAggregateRows } from "./dimension-utils";
-import { buildAggregateQuery, buildBankRowSummaryQuery, buildRowsQuery } from "./sql-builder";
+import { buildAggregateQuery, buildRowSummaryQuery, buildRowsQuery } from "./sql-builder";
 
 export type ShapedResult = {
   mode: SemanticQuery["resultMode"];
@@ -25,11 +25,7 @@ export async function executeSemanticQuery(query: SemanticQueryPayload): Promise
     return { mode: query.resultMode, aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []) };
   }
   if (!query.rowLimit) throw new Error("Row result modes require a normalized rowLimit");
-  if (query.domain !== "bank") {
-    const aggregateRows = await buildAggregateQuery({ ...query, resultMode: "aggregate_only", rowLimit: 0 });
-    return { mode: "aggregate_only", aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []) };
-  }
-  const [rows, summaryRows] = await Promise.all([buildRowsQuery(query), buildBankRowSummaryQuery(query)]);
+  const [rows, summaryRows] = await Promise.all([buildRowsQuery(query), buildRowSummaryQuery(query)]);
   return { mode: query.resultMode, rows, summaryRows };
 }
 

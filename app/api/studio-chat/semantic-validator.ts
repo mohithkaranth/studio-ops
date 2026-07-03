@@ -50,8 +50,9 @@ function validateComparisonQuery(raw: ComparisonQuery, question: string, parsedD
 function validateSingleQuery(raw: SemanticQuery, question: string, parsedDate: ParsedDateMention): ValidationResult {
   const query = normalizeSingleQuery(raw, parsedDate, undefined, undefined, question);
   if (!query) return { type: "clarification", question: "Should I look at bank transactions or Acuity bookings?", options: ["Bank", "Acuity"] };
-  if (query.metrics.length === 0) return { type: "clarification", question: `Which ${raw.domain === "bank" ? "bank" : "Acuity"} metric should I use?` };
-  if (query.domain === "bank" && isCombinedBankMovement(query.metrics) && !hasRowWording(question)) query.resultMode = "aggregate_only";
+  applyDeterministicRouting(query, question);
+  if (query.metrics.length === 0) return { type: "clarification", question: `Which ${query.domain === "bank" ? "bank" : "Acuity"} metric should I use?` };
+  if (query.domain === "bank" && isCombinedBankMovement(query.metrics) && !hasBankRowWording(question)) query.resultMode = "aggregate_only";
   query.rowLimit = normalizeRowLimit(query.resultMode, raw.rowLimit);
   return { type: "query", query };
 }
@@ -105,7 +106,41 @@ function normalizeTransactionType(metrics: string[], transactionType: unknown) {
   return "both";
 }
 function isCombinedBankMovement(metrics: string[]) { return metrics.includes("net_movement") || (metrics.includes("bank_credits") && metrics.includes("bank_debits")); }
-function hasRowWording(question: string) { return /\b(show all|list|details?|transactions?|payments?|tell me all)\b/i.test(question); }
+function applyDeterministicRouting(query: SemanticQuery, question: string) {
+  if (hasAcuityDetailWording(question)) {
+    query.domain = "acuity";
+    query.metrics = query.metrics.filter((metric) => metric in semanticModel.acuity.metrics);
+    if (!query.metrics.length) query.metrics = ["booking_count"];
+    query.dimensions = (query.dimensions ?? []).filter((dimension) => dimension in semanticModel.acuity.dimensions);
+    query.resultMode = "aggregate_with_rows";
+    query.filters = {
+      searchText: query.filters?.searchText ?? inferAcuitySearchText(question),
+      dateBasis: inferredDateBasis("acuity", question) ?? "appointment_datetime",
+    };
+    return;
+  }
+
+  if (query.domain === "bank" && hasGenericRowWording(question) && !hasBankWording(question)) {
+    query.resultMode = "aggregate_only";
+  }
+}
+function hasGenericRowWording(question: string) { return /\b(data|rows?|lists?|details?|show(?: me)?|show all|tell me all)\b/i.test(question); }
+function hasBankRowWording(question: string) { return hasBankWording(question) && /\b(show all|list|details?|transactions?|payments?|tell me all|rows?)\b/i.test(question); }
+function hasBankWording(question: string) { return /\b(bank|statement|credits?|debits?|inflows?|outflows?|paynow|transactions?|running balance|net movement|money in|money out)\b/i.test(question); }
+function hasAcuityDetailWording(question: string) {
+  return /\b(?:booking|appointment)s?\s+(?:data|rows?|lists?|details?)\b/i.test(question)
+    || /\b(?:data|rows?|lists?|details?)\s+(?:of\s+)?(?:booking|appointment)s?\b/i.test(question)
+    || /\blist of (?:booking|appointment)s?\b/i.test(question)
+    || /\bshow(?: me)? (?:all )?(?:booking|appointment)s?\b/i.test(question);
+}
+function inferAcuitySearchText(question: string): string | null {
+  const withoutDates = question
+    .replace(/\b(?:for|in|during)?\s*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b/gi, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ");
+  const beforeIntent = withoutDates.split(/\b(?:booking|appointment)s?\s+(?:data|rows?|lists?|details?)\b/i)[0] ?? "";
+  const cleaned = beforeIntent.replace(/\b(show|me|all|the|for|in|of|please|data|rows?|lists?|details?)\b/gi, " ").replace(/[^a-z0-9' ]/gi, " ").trim();
+  return cleaned || null;
+}
 function isUnsourcedRevenue(question: string) {
   const q = question.toLowerCase();
   return /\brevenues?\b/.test(q) && !/\b(bank|acuity|booking|appointment)\b/.test(q);
