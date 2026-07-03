@@ -22,15 +22,20 @@ export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
 }
 
 export function buildRowsQuery(query: SemanticQuery): BuiltQuery {
-  if (query.domain !== "bank") throw new Error("Rows are only supported for bank queries in Phase 1");
   if (!query.rowLimit) throw new Error("Rows query requires a LIMIT");
-  const model = semanticModel.bank;
+  const model = semanticModel[query.domain];
   const parts = buildWhere(query);
   parts.params.push(query.rowLimit);
-  return sql.unsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)} ORDER BY transaction_date DESC, id DESC LIMIT $${parts.params.length}`, parts.params) as BuiltQuery;
+  const orderDate = selectedDateBasis(query);
+  return sql.unsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)} ORDER BY ${orderDate} DESC, id DESC LIMIT $${parts.params.length}`, parts.params) as BuiltQuery;
 }
 
-export function buildBankRowSummaryQuery(query: SemanticQuery): BuiltQuery {
+export function buildRowSummaryQuery(query: SemanticQuery): BuiltQuery {
+  if (query.domain === "acuity") {
+    const parts = buildWhere(query);
+    return sql.unsafe(`SELECT COUNT(*) AS total_count FROM acuity_appointments${whereSql(parts.where)}`, parts.params) as BuiltQuery;
+  }
+
   if (query.domain !== "bank") throw new Error("Bank row summary is only supported for bank queries");
   const parts = buildWhere(query);
   return sql.unsafe(`SELECT COUNT(*) AS total_count, SUM(COALESCE(credit, 0)) AS total_credit, SUM(COALESCE(debit, 0)) AS total_debit, SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement FROM bank_transactions${whereSql(parts.where)}`, parts.params) as BuiltQuery;
@@ -58,6 +63,23 @@ function buildWhere(query: SemanticQuery): SqlParts {
       params.push(`%${searchText}%`);
       const placeholder = `$${params.length}`;
       where.push(`(${semanticModel.bank.searchTextFields?.map((field) => `${field} ILIKE ${placeholder}`).join(" OR ")})`);
+    }
+  }
+
+  if (query.domain === "acuity") {
+    const searchText = query.filters?.searchText?.trim();
+    if (searchText) {
+      const terms = searchText.split(/\s+/).filter(Boolean);
+      for (const term of terms.length ? terms : [searchText]) {
+        const variants = [...new Set([term, term.replace(/'s$/i, ""), term.replace(/s$/i, "")].filter(Boolean))];
+        const variantClauses: string[] = [];
+        for (const variant of variants) {
+          params.push(`%${variant}%`);
+          const placeholder = `$${params.length}`;
+          variantClauses.push(`(${semanticModel.acuity.searchTextFields?.map((field) => `${field} ILIKE ${placeholder}`).join(" OR ")})`);
+        }
+        where.push(`(${variantClauses.join(" OR ")})`);
+      }
     }
   }
   return { where, params };

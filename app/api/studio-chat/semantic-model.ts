@@ -50,6 +50,7 @@ export const semanticModel: Record<Domain, SemanticDomainModel> = {
       appointment_type_name: { column: "appointment_type_name", label: "Appointment type", aliases: ["service", "appointment type"] },
       paid_status: { column: "paid_status", label: "Paid status" },
     },
-    rowFields: ["appointment_datetime", "created_datetime", "client_first_name", "client_last_name", "appointment_type_name", "calendar_name", "price", "paid_status", "canceled"],
+    rowFields: ["appointment_datetime", "COALESCE(NULLIF(trim(client_first_name || ' ' || client_last_name), ''), client_email, 'Unknown') AS client_name", "client_email", "appointment_type_name", "calendar_name", "price", "paid_status", "canceled", "created_datetime"],
+    searchTextFields: ["client_first_name", "client_last_name", "client_email", "appointment_type_name", "calendar_name"],
   },
 };
