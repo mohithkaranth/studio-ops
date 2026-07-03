@@ -1,6 +1,7 @@
 import { semanticModel, type DateBasis } from "./semantic-model";
 import type { ParsedDateMention } from "./date-parser";
 import { isComparisonQuery, normalizeRowLimit, type ComparisonQuery, type SemanticQuery, type SemanticQueryPayload } from "./semantic-query";
+import { normalizeAcuityClientSearchText } from "./acuity-client-matching";
 
 type Clarification = { type: "clarification"; question: string; options?: string[] };
 type ValidationResult = { type: "query"; query: SemanticQueryPayload } | Clarification;
@@ -114,7 +115,7 @@ function applyDeterministicRouting(query: SemanticQuery, question: string) {
     query.dimensions = (query.dimensions ?? []).filter((dimension) => dimension in semanticModel.acuity.dimensions);
     query.resultMode = "aggregate_with_rows";
     query.filters = {
-      searchText: query.filters?.searchText ?? inferAcuitySearchText(question),
+      searchText: inferAcuitySearchText(question) ?? normalizeAcuityClientSearchText(query.filters?.searchText),
       dateBasis: inferredDateBasis("acuity", question) ?? "appointment_datetime",
     };
     return;
@@ -139,7 +140,7 @@ function inferAcuitySearchText(question: string): string | null {
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ");
   const beforeIntent = withoutDates.split(/\b(?:booking|appointment)s?\s+(?:data|rows?|lists?|details?)\b/i)[0] ?? "";
   const cleaned = beforeIntent.replace(/\b(show|me|all|the|for|in|of|please|data|rows?|lists?|details?)\b/gi, " ").replace(/[^a-z0-9' ]/gi, " ").trim();
-  return cleaned || null;
+  return normalizeAcuityClientSearchText(cleaned);
 }
 function isUnsourcedRevenue(question: string) {
   const q = question.toLowerCase();

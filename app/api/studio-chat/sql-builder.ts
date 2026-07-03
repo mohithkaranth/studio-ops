@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { semanticModel, type DateBasis } from "./semantic-model";
 import type { SemanticQuery } from "./semantic-query";
+import { acuityClientSearchTerms } from "./acuity-client-matching";
 
 export type BuiltQuery = Promise<Record<string, unknown>[]>;
 
@@ -67,23 +68,22 @@ function buildWhere(query: SemanticQuery): SqlParts {
   }
 
   if (query.domain === "acuity") {
-    const searchText = query.filters?.searchText?.trim();
-    if (searchText) {
-      const terms = searchText.split(/\s+/).filter(Boolean);
-      for (const term of terms.length ? terms : [searchText]) {
-        const variants = [...new Set([term, term.replace(/'s$/i, ""), term.replace(/s$/i, "")].filter(Boolean))];
-        const variantClauses: string[] = [];
-        for (const variant of variants) {
-          params.push(`%${variant}%`);
-          const placeholder = `$${params.length}`;
-          variantClauses.push(`(${semanticModel.acuity.searchTextFields?.map((field) => `${field} ILIKE ${placeholder}`).join(" OR ")})`);
-        }
-        where.push(`(${variantClauses.join(" OR ")})`);
-      }
+    const terms = acuityClientSearchTerms(query.filters?.searchText);
+    for (const term of terms) {
+      params.push(`%${term}%`);
+      const placeholder = `$${params.length}`;
+      where.push(`(${acuityClientSearchExpressions().map((expression) => `${expression} ILIKE ${placeholder}`).join(" OR ")})`);
     }
   }
   return { where, params };
 }
+function acuityClientSearchExpressions(): string[] {
+  return [
+    ...(semanticModel.acuity.searchTextFields ?? []),
+    "COALESCE(NULLIF(trim(client_first_name || ' ' || client_last_name), ''), client_email, 'Unknown')",
+  ];
+}
+
 function whereSql(where: string[]) { return where.length ? ` WHERE ${where.join(" AND ")}` : ""; }
 
 function defaultMetricFilters(query: SemanticQuery): string[] {
