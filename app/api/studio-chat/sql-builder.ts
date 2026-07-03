@@ -28,8 +28,9 @@ export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
   query.metrics.forEach((name) => select.push(`${model.metrics[name].expression} AS ${name}`));
   const parts = buildWhere(query);
   const groupBy = dimensions.length ? ` GROUP BY ${dimensions.map((_, i) => i + 1).join(", ")}` : "";
-  const orderBy = dimensions.length ? ` ORDER BY ${dimensions.map((_, i) => i + 1).join(", ")}` : "";
-  return runUnsafe(`SELECT ${select.join(", ")} FROM ${model.table}${whereSql(parts.where)}${groupBy}${orderBy}`, parts.params);
+  const orderBy = aggregateOrderBy(query, dimensions);
+  const limit = aggregateLimit(query, parts.params);
+  return runUnsafe(`SELECT ${select.join(", ")} FROM ${model.table}${whereSql(parts.where)}${groupBy}${orderBy}${limit}`, parts.params);
 }
 
 export function buildRowsQuery(query: SemanticQuery): BuiltQuery {
@@ -37,8 +38,8 @@ export function buildRowsQuery(query: SemanticQuery): BuiltQuery {
   const model = semanticModel[query.domain];
   const parts = buildWhere(query);
   parts.params.push(query.rowLimit);
-  const orderDate = selectedDateBasis(query);
-  return runUnsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)} ORDER BY ${orderDate} DESC, id DESC LIMIT $${parts.params.length}`, parts.params);
+  const orderClause = rowOrderBy(query);
+  return runUnsafe(`SELECT ${model.rowFields.join(", ")} FROM ${model.table}${whereSql(parts.where)}${orderClause} LIMIT $${parts.params.length}`, parts.params);
 }
 
 export function buildRowSummaryQuery(query: SemanticQuery): BuiltQuery {
@@ -134,4 +135,23 @@ function dimensionExpression(query: SemanticQuery, name: string, dateBasis: Date
 
 function isTemporalDateBasis(dateBasis: DateBasis): boolean {
   return dateBasis === "transaction_date" || dateBasis === "value_date" || dateBasis === "appointment_datetime" || dateBasis === "created_datetime";
+}
+
+
+function aggregateOrderBy(query: SemanticQuery, dimensions: string[]): string {
+  if (query.orderBy?.field && query.metrics.includes(query.orderBy.field)) return ` ORDER BY ${query.orderBy.field} ${query.orderBy.direction.toUpperCase()}`;
+  if (dimensions.length) return ` ORDER BY ${dimensions.map((_, i) => i + 1).join(", ")}`;
+  return "";
+}
+
+function aggregateLimit(query: SemanticQuery, params: (string | number)[]): string {
+  if (!query.rowLimit || query.resultMode !== "aggregate_only") return "";
+  params.push(query.rowLimit);
+  return ` LIMIT $${params.length}`;
+}
+
+function rowOrderBy(query: SemanticQuery): string {
+  if (query.orderBy?.field && /^[a-z_][a-z0-9_]*$/i.test(query.orderBy.field)) return ` ORDER BY ${query.orderBy.field} ${query.orderBy.direction.toUpperCase()}, id DESC`;
+  const orderDate = selectedDateBasis(query);
+  return ` ORDER BY ${orderDate} DESC, id DESC`;
 }

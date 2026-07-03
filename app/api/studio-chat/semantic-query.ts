@@ -26,6 +26,7 @@ export type SemanticQuery = {
   dateRange?: DateRange | null;
   resultMode: ResultMode;
   rowLimit?: number;
+  orderBy?: { field: string; direction: "asc" | "desc" } | null;
   clarification?: ClarificationRequest;
 };
 
