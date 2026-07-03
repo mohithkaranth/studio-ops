@@ -1,12 +1,13 @@
 import { isComparisonQuery, type ComparisonQuery, type SemanticQuery, type SemanticQueryPayload } from "./semantic-query";
 import { sortAggregateRows } from "./dimension-utils";
-import { buildAggregateQuery, buildRowSummaryQuery, buildRowsQuery } from "./sql-builder";
+import { buildAggregateQuery, buildRowSummaryQuery, buildRowsQuery, type BuiltQuery, type SqlDebugInfo } from "./sql-builder";
 
 export type ShapedResult = {
   mode: SemanticQuery["resultMode"];
   aggregateRows?: Record<string, unknown>[];
   rows?: Record<string, unknown>[];
   summaryRows?: Record<string, unknown>[];
+  sqlDebug: SqlDebugInfo[];
 };
 
 const COMPARISON_METRIC_ALIASES: Record<string, string> = {
@@ -21,17 +22,21 @@ const COMPARISON_METRIC_ALIASES: Record<string, string> = {
 export async function executeSemanticQuery(query: SemanticQueryPayload): Promise<ShapedResult> {
   if (isComparisonQuery(query)) return executeComparisonQuery(query);
   if (query.resultMode === "aggregate_only") {
-    const aggregateRows = await buildAggregateQuery(query);
-    return { mode: query.resultMode, aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []) };
+    const aggregateQuery = buildAggregateQuery(query);
+    const aggregateRows = await aggregateQuery;
+    return { mode: query.resultMode, aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []), sqlDebug: collectSqlDebug(aggregateQuery) };
   }
   if (!query.rowLimit) throw new Error("Row result modes require a normalized rowLimit");
-  const [rows, summaryRows] = await Promise.all([buildRowsQuery(query), buildRowSummaryQuery(query)]);
-  return { mode: query.resultMode, rows, summaryRows };
+  const rowsQuery = buildRowsQuery(query);
+  const summaryQuery = buildRowSummaryQuery(query);
+  const [rows, summaryRows] = await Promise.all([rowsQuery, summaryQuery]);
+  return { mode: query.resultMode, rows, summaryRows, sqlDebug: collectSqlDebug(rowsQuery, summaryQuery) };
 }
 
 async function executeComparisonQuery(query: ComparisonQuery): Promise<ShapedResult> {
-  const childRows = await Promise.all(query.queries.map((child) => buildAggregateQuery({ ...child, resultMode: "aggregate_only", rowLimit: 0 })));
-  return { mode: "aggregate_only", aggregateRows: mergeComparisonRows(query, childRows) };
+  const childQueries = query.queries.map((child) => buildAggregateQuery({ ...child, resultMode: "aggregate_only", rowLimit: 0 }));
+  const childRows = await Promise.all(childQueries);
+  return { mode: "aggregate_only", aggregateRows: mergeComparisonRows(query, childRows), sqlDebug: collectSqlDebug(...childQueries) };
 }
 
 function mergeComparisonRows(query: ComparisonQuery, childRows: Record<string, unknown>[][]): Record<string, unknown>[] {
@@ -64,4 +69,8 @@ function comparisonDimensions(query: ComparisonQuery): ("month" | "year")[] {
 function baseComparisonRow(dimensions: ("month" | "year")[], sourceRow: Record<string, unknown>): Record<string, unknown> {
   if (!dimensions.length) return { period: "total" };
   return Object.fromEntries(dimensions.map((dimension) => [dimension, sourceRow[dimension]]));
+}
+
+function collectSqlDebug(...queries: BuiltQuery[]): SqlDebugInfo[] {
+  return queries.map((query) => query.debugSql);
 }

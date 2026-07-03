@@ -3,7 +3,8 @@ import { semanticModel, type DateBasis } from "./semantic-model";
 import type { SemanticQuery } from "./semantic-query";
 import { acuityClientSearchTerms } from "./acuity-client-matching";
 
-export type BuiltQuery = Promise<Record<string, unknown>[]>;
+export type SqlDebugInfo = { sql: string; params: (string | number)[] };
+export type BuiltQuery = Promise<Record<string, unknown>[]> & { debugSql: SqlDebugInfo };
 
 type SqlParts = { where: string[]; params: (string | number)[] };
 
@@ -11,7 +12,9 @@ const ACUITY_REPORT_TIME_ZONE = "Asia/Singapore";
 
 function runUnsafe(queryText: string, params: (string | number)[]): BuiltQuery {
   console.info("Studio Chat generated SQL", { sql: queryText, params });
-  return sql.unsafe(queryText, params) as BuiltQuery;
+  const query = sql.unsafe(queryText, params) as unknown as BuiltQuery;
+  query.debugSql = { sql: queryText, params: [...params] };
+  return query;
 }
 
 export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
