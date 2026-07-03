@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
     const shapedResult = await executeSemanticQuery(validated.query);
     const answer = renderAnswer(validated.query, shapedResult);
-    return Response.json({ type: "answer", ...answer });
+    return Response.json({ type: "answer", ...answer, sqlDebug: shapedResult.sqlDebug, semanticQuery: validated.query });
   } catch (error) {
     console.error("Studio Chat failed:", error);
     return Response.json({ error: "Studio Chat could not answer that question." }, { status: 500 });

@@ -2,9 +2,11 @@
 
 import { FormEvent, useState } from "react";
 
+type SqlDebugInfo = { sql: string; params: (string | number)[] };
+
 type ChatResponse =
   | { type: "clarification"; question: string; options?: string[] }
-  | { type: "answer"; answer: string; columns: string[]; rows: Record<string, unknown>[] };
+  | { type: "answer"; answer: string; columns: string[]; rows: Record<string, unknown>[]; sqlDebug?: SqlDebugInfo[]; semanticQuery?: unknown };
 
 export default function StudioChatPage() {
   const [question, setQuestion] = useState("");
@@ -113,6 +115,15 @@ export default function StudioChatPage() {
               <h2 className="text-lg font-semibold text-zinc-50">Answer</h2>
               <p className="mt-2 text-sm text-zinc-300">{response.answer}</p>
             </div>
+            {response.sqlDebug?.length ? (
+              <button
+                type="button"
+                onClick={() => openGeneratedSql(response.sqlDebug ?? [], response.semanticQuery)}
+                className="text-left text-xs font-medium text-zinc-400 underline underline-offset-4 hover:text-zinc-100"
+              >
+                View generated SQL
+              </button>
+            ) : null}
             <div className="overflow-x-auto rounded-xl border border-zinc-800">
               <table className="min-w-full divide-y divide-zinc-800 text-sm">
                 <thead className="bg-zinc-950/80 text-xs uppercase tracking-wide text-zinc-500">
@@ -136,4 +147,53 @@ function formatCell(value: unknown) {
   if (value === null || value === undefined) return "";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value);
+}
+
+function openGeneratedSql(sqlDebug: SqlDebugInfo[], semanticQuery: unknown) {
+  const debugWindow = window.open("", "_blank");
+  if (!debugWindow) return;
+
+  debugWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <title>Studio Chat generated SQL</title>
+  <style>
+    body { background: #09090b; color: #e4e4e7; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 32px; }
+    main { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 24px; margin: 0 0 24px; }
+    h2 { color: #fafafa; font-size: 16px; margin: 24px 0 8px; }
+    pre { background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; overflow-x: auto; padding: 16px; white-space: pre-wrap; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Studio Chat generated SQL</h1>
+    ${sqlDebug.map((debug, index) => `
+      <section>
+        <h2>Query ${index + 1}</h2>
+        <pre><code>${escapeHtml(debug.sql)}</code></pre>
+        <h2>Bound parameters</h2>
+        <pre><code>${escapeHtml(JSON.stringify(debug.params, null, 2))}</code></pre>
+      </section>
+    `).join("")}
+    ${semanticQuery === undefined ? "" : `
+      <section>
+        <h2>Resolved semantic query</h2>
+        <pre><code>${escapeHtml(JSON.stringify(semanticQuery, null, 2))}</code></pre>
+      </section>
+    `}
+  </main>
+</body>
+</html>`);
+  debugWindow.document.close();
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
