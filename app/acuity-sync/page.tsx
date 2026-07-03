@@ -8,7 +8,7 @@ export default function AcuitySyncPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Sync Acuity Data</h1>
         <p className="text-sm text-zinc-400">
-          Manually sync the last 6 months of Acuity appointments into the database.
+          Manually sync Acuity appointments for the previous month, current month, and next two months.
         </p>
       </header>
 
