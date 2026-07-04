@@ -1,5 +1,6 @@
 import Link from "next/link";
 import RoomUtilisationFilters from "./RoomUtilisationFilters";
+import ExportAppointmentDetailsButton from "./ExportAppointmentDetailsButton";
 import { sql } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -248,10 +249,11 @@ export default async function RoomUtilisationPage(props: {
         </section>
 
         <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60">
-          <div className="border-b border-zinc-800 px-4 py-3">
+          <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-4 py-3">
             <h2 className="text-lg font-medium text-zinc-100">
               Appointment details
             </h2>
+            <ExportAppointmentDetailsButton appointments={appointments} />
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-zinc-800 text-sm">
