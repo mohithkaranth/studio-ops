@@ -6,6 +6,7 @@ import { useState } from "react";
 const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/revenue", label: "Revenue Reports" },
+  { href: "/reports/room-utilisation", label: "Room Utilisation" },
   { href: "/studio-chat", label: "Studio Chat" },
   { href: "/acuity-sync", label: "Sync Acuity Data" },
   { href: "/bank-statements", label: "Upload Bank Statements" },
