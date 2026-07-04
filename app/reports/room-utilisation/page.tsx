@@ -8,6 +8,7 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 type AppointmentRow = {
   appointment_date_sgt: string;
+  appointment_period_sgt: string;
   appointment_time_sgt: string;
   created_time_sgt: string | null;
   client_name: string;
@@ -18,14 +19,16 @@ type AppointmentRow = {
 };
 
 type DateCountRow = {
-  date: string;
+  period: string;
   total: number;
   livingRoom: number;
   bedroom: number;
 };
 
 const DEFAULT_CALENDARS = ["Living Room", "Bedroom"];
+const DEFAULT_DAY_TYPES = ["weekdays", "weekends"];
 const calendarOptions = DEFAULT_CALENDARS;
+const dayTypeOptions = DEFAULT_DAY_TYPES;
 const timePattern = /^\d{2}:\d{2}$/;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -70,6 +73,15 @@ function normaliseCalendars(value: string | string[] | undefined) {
   return selected && selected.length > 0 ? selected : DEFAULT_CALENDARS;
 }
 
+function normaliseDayTypes(value: string | string[] | undefined) {
+  const selected = firstValue(value)
+    ?.split(",")
+    .map((dayType) => dayType.trim())
+    .filter((dayType) => dayTypeOptions.includes(dayType));
+
+  return selected && selected.length > 0 ? selected : DEFAULT_DAY_TYPES;
+}
+
 function numberValue(value: string | number | null) {
   if (value === null) return 0;
   const numeric = typeof value === "number" ? value : Number(value);
@@ -103,11 +115,20 @@ export default async function RoomUtilisationPage(props: {
     timeFrom: normaliseTime(searchParams.timeFrom, "10:00"),
     timeTo: normaliseTime(searchParams.timeTo, "16:00"),
     calendars: normaliseCalendars(searchParams.calendars),
+    dayTypes: normaliseDayTypes(searchParams.dayTypes),
   };
+  const groupByMonth =
+    filters.dateFrom.slice(0, 7) !== filters.dateTo.slice(0, 7);
+  const dayTypeFilter =
+    filters.dayTypes.length === 1 ? filters.dayTypes[0] : "all";
 
   const appointments = await sql<AppointmentRow[]>`
     SELECT
       TO_CHAR((appointment_datetime AT TIME ZONE 'Asia/Singapore')::date, 'YYYY-MM-DD') AS appointment_date_sgt,
+      CASE
+        WHEN ${groupByMonth} THEN TO_CHAR(DATE_TRUNC('month', appointment_datetime AT TIME ZONE 'Asia/Singapore')::date, 'YYYY-MM')
+        ELSE TO_CHAR((appointment_datetime AT TIME ZONE 'Asia/Singapore')::date, 'YYYY-MM-DD')
+      END AS appointment_period_sgt,
       TO_CHAR(appointment_datetime AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD HH24:MI') AS appointment_time_sgt,
       TO_CHAR(created_datetime AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD HH24:MI') AS created_time_sgt,
       COALESCE(NULLIF(trim(client_first_name || ' ' || client_last_name), ''), client_email, 'Unknown') AS client_name,
@@ -123,6 +144,11 @@ export default async function RoomUtilisationPage(props: {
       AND (appointment_datetime AT TIME ZONE 'Asia/Singapore')::time >= ${filters.timeFrom}::time
       AND (appointment_datetime AT TIME ZONE 'Asia/Singapore')::time < ${filters.timeTo}::time
       AND calendar_name = ANY(${filters.calendars}::text[])
+      AND (
+        ${dayTypeFilter} = 'all'
+        OR (${dayTypeFilter} = 'weekdays' AND EXTRACT(ISODOW FROM appointment_datetime AT TIME ZONE 'Asia/Singapore') BETWEEN 1 AND 5)
+        OR (${dayTypeFilter} = 'weekends' AND EXTRACT(ISODOW FROM appointment_datetime AT TIME ZONE 'Asia/Singapore') IN (6, 7))
+      )
     ORDER BY appointment_datetime ASC;
   `;
 
@@ -137,8 +163,8 @@ export default async function RoomUtilisationPage(props: {
   const dateCounts = [
     ...appointments
       .reduce((counts, row) => {
-        const existing = counts.get(row.appointment_date_sgt) ?? {
-          date: row.appointment_date_sgt,
+        const existing = counts.get(row.appointment_period_sgt) ?? {
+          period: row.appointment_period_sgt,
           total: 0,
           livingRoom: 0,
           bedroom: 0,
@@ -146,11 +172,11 @@ export default async function RoomUtilisationPage(props: {
         existing.total += 1;
         if (row.calendar_name === "Living Room") existing.livingRoom += 1;
         if (row.calendar_name === "Bedroom") existing.bedroom += 1;
-        counts.set(row.appointment_date_sgt, existing);
+        counts.set(row.appointment_period_sgt, existing);
         return counts;
       }, new Map<string, DateCountRow>())
       .values(),
-  ].sort((a, b) => a.date.localeCompare(b.date));
+  ].sort((a, b) => a.period.localeCompare(b.period));
 
   const calendarCounts = [
     ...appointments
@@ -182,6 +208,7 @@ export default async function RoomUtilisationPage(props: {
           timeFrom={filters.timeFrom}
           timeTo={filters.timeTo}
           calendars={filters.calendars}
+          dayTypes={filters.dayTypes}
         />
 
         <section className="grid gap-4 sm:grid-cols-3">
@@ -201,10 +228,15 @@ export default async function RoomUtilisationPage(props: {
 
         <section className="grid gap-6 xl:grid-cols-2">
           <ReportTable
-            title="Count by Singapore appointment date"
-            headers={["Date", "Total", "Living Room", "Bedroom"]}
+            title={`Count by Singapore appointment ${groupByMonth ? "month" : "date"}`}
+            headers={[
+              groupByMonth ? "Month" : "Date",
+              "Total",
+              "Living Room",
+              "Bedroom",
+            ]}
             rows={dateCounts.map((row) => [
-              row.date,
+              row.period,
               row.total,
               row.livingRoom,
               row.bedroom,

@@ -1,6 +1,10 @@
 "use client";
 
 const calendarOptions = ["Living Room", "Bedroom"];
+const dayTypeOptions = [
+  { label: "Weekdays", value: "weekdays" },
+  { label: "Weekends", value: "weekends" },
+];
 
 type RoomUtilisationFiltersProps = {
   dateFrom: string;
@@ -8,6 +12,7 @@ type RoomUtilisationFiltersProps = {
   timeFrom: string;
   timeTo: string;
   calendars: string[];
+  dayTypes: string[];
 };
 
 export default function RoomUtilisationFilters({
@@ -16,6 +21,7 @@ export default function RoomUtilisationFilters({
   timeFrom,
   timeTo,
   calendars,
+  dayTypes,
 }: RoomUtilisationFiltersProps) {
   return (
     <form
@@ -28,8 +34,16 @@ export default function RoomUtilisationFilters({
           ),
         ).map((input) => input.value);
         form.calendars.value = selectedCalendars.join(",");
+        const selectedDayTypes = Array.from(
+          form.querySelectorAll<HTMLInputElement>(
+            'input[name="dayTypeOption"]:checked',
+          ),
+        ).map((input) => input.value);
+        form.dayTypes.value = selectedDayTypes.join(",");
         form
-          .querySelectorAll<HTMLInputElement>('input[name="calendarOption"]')
+          .querySelectorAll<HTMLInputElement>(
+            'input[name="calendarOption"], input[name="dayTypeOption"]',
+          )
           .forEach((input) => {
             input.disabled = true;
           });
@@ -40,7 +54,8 @@ export default function RoomUtilisationFilters({
         name="calendars"
         defaultValue={calendars.join(",")}
       />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <input type="hidden" name="dayTypes" defaultValue={dayTypes.join(",")} />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <label className="space-y-1 text-sm text-zinc-300">
           <span>Date from</span>
           <input
@@ -77,6 +92,25 @@ export default function RoomUtilisationFilters({
             className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100"
           />
         </label>
+
+        <div className="space-y-2 text-sm text-zinc-300">
+          <span>Day type</span>
+          {dayTypeOptions.map((dayType) => (
+            <label
+              key={dayType.value}
+              className="flex items-center gap-2 text-zinc-300"
+            >
+              <input
+                name="dayTypeOption"
+                type="checkbox"
+                value={dayType.value}
+                defaultChecked={dayTypes.includes(dayType.value)}
+                className="h-4 w-4 accent-zinc-200"
+              />
+              {dayType.label}
+            </label>
+          ))}
+        </div>
         <div className="space-y-2 text-sm text-zinc-300">
           <span>Calendars</span>
           {calendarOptions.map((calendar) => (
