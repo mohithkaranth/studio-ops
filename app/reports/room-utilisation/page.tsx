@@ -15,7 +15,6 @@ type AppointmentRow = {
   appointment_type_name: string | null;
   calendar_name: string;
   price: string | number | null;
-  paid_status: string | null;
 };
 
 type DateCountRow = {
@@ -134,8 +133,7 @@ export default async function RoomUtilisationPage(props: {
       COALESCE(NULLIF(trim(client_first_name || ' ' || client_last_name), ''), client_email, 'Unknown') AS client_name,
       appointment_type_name,
       calendar_name,
-      price,
-      paid_status
+      price
     FROM acuity_appointments
     WHERE appointment_datetime IS NOT NULL
       AND COALESCE(canceled, false) IS FALSE
@@ -228,7 +226,7 @@ export default async function RoomUtilisationPage(props: {
 
         <section className="grid gap-6 xl:grid-cols-2">
           <ReportTable
-            title={`Count by Singapore appointment ${groupByMonth ? "month" : "date"}`}
+            title={groupByMonth ? "Appointments by Month" : "Appointments by Date"}
             headers={[
               groupByMonth ? "Month" : "Date",
               "Total",
@@ -243,7 +241,7 @@ export default async function RoomUtilisationPage(props: {
             ])}
           />
           <ReportTable
-            title="Count by calendar"
+            title="Count by Room Type"
             headers={["Calendar", "Count"]}
             rows={calendarCounts.map((row) => [row.calendar, row.count])}
           />
@@ -266,7 +264,6 @@ export default async function RoomUtilisationPage(props: {
                     "Appointment Type",
                     "Calendar",
                     "Price",
-                    "Paid Status",
                   ].map((header) => (
                     <th key={header} className="px-4 py-3 font-medium">
                       {header}
@@ -278,7 +275,7 @@ export default async function RoomUtilisationPage(props: {
                 {appointments.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={6}
                       className="px-4 py-6 text-center text-zinc-500"
                     >
                       No appointments found for the selected filters.
@@ -304,9 +301,6 @@ export default async function RoomUtilisationPage(props: {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         {formatPrice(appointment.price)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        {appointment.paid_status ?? "—"}
                       </td>
                     </tr>
                   ))
