@@ -7,6 +7,7 @@ const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/revenue", label: "Revenue Reports" },
   { href: "/reports/room-utilisation", label: "Room Utilisation" },
+  { href: "/customer-analytics", label: "Customer Analytics" },
   { href: "/studio-chat", label: "Studio Chat" },
   { href: "/acuity-sync", label: "Sync Acuity Data" },
   { href: "/bank-statements", label: "Upload Bank Statements" },
