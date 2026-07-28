@@ -5,7 +5,6 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 type AnalyticsRow = {
-  client_id: number | null;
   client: string | null;
   email: string | null;
   phone: string | null;
@@ -79,20 +78,34 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           (${inactiveMonths} * INTERVAL '1 month') AS inactive_interval,
           ${averageBookings}::numeric AS minimum_average,
           ${minimumLifetimeBookings}::integer AS minimum_lifetime
+      ), appointments AS (
+        SELECT
+          COALESCE(
+            NULLIF(TRIM(client_first_name || ' ' || client_last_name), ''),
+            client_email,
+            'Unknown'
+          ) AS client,
+          client_email,
+          client_phone,
+          appointment_datetime
+        FROM acuity_appointments
+        WHERE appointment_datetime IS NOT NULL
+          AND COALESCE(canceled, false) IS FALSE
       ), customer_activity AS (
         SELECT
-          c.id AS client_id,
-          COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''), c.email, 'Unknown client') AS client,
-          c.email,
-          c.phone,
+          a.client,
+          (ARRAY_AGG(NULLIF(TRIM(a.client_email), '') ORDER BY a.appointment_datetime DESC)
+            FILTER (WHERE NULLIF(TRIM(a.client_email), '') IS NOT NULL))[1] AS email,
+          (ARRAY_AGG(NULLIF(TRIM(a.client_phone), '') ORDER BY a.appointment_datetime DESC)
+            FILTER (WHERE NULLIF(TRIM(a.client_phone), '') IS NOT NULL))[1] AS phone,
           MIN((a.appointment_datetime AT TIME ZONE 'Asia/Singapore')::date) AS first_booking,
           MAX((a.appointment_datetime AT TIME ZONE 'Asia/Singapore')::date) AS last_booking,
-          COUNT(a.id)::integer AS total_bookings,
-          COUNT(a.id) FILTER (
+          COUNT(*)::integer AS total_bookings,
+          COUNT(*) FILTER (
             WHERE a.appointment_datetime >= (s.period_start::timestamp AT TIME ZONE 'Asia/Singapore')
               AND a.appointment_datetime < (s.period_end::timestamp AT TIME ZONE 'Asia/Singapore')
           )::integer AS period_bookings,
-          COUNT(a.id) FILTER (
+          COUNT(*) FILTER (
             WHERE a.appointment_datetime >= (((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Singapore') - s.inactive_interval) AT TIME ZONE 'Asia/Singapore')
               AND a.appointment_datetime < ((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Singapore') AT TIME ZONE 'Asia/Singapore')
           )::integer AS inactive_period_bookings,
@@ -101,12 +114,9 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           ((EXTRACT(YEAR FROM AGE(s.period_end, s.period_start)) * 12) + EXTRACT(MONTH FROM AGE(s.period_end, s.period_start)))::integer AS period_months,
           s.minimum_average,
           s.minimum_lifetime
-        FROM acuity_clients c
+        FROM appointments a
         CROSS JOIN settings s
-        LEFT JOIN acuity_appointments a ON a.client_id = c.id
-          AND a.appointment_datetime IS NOT NULL
-          AND COALESCE(a.canceled, false) IS FALSE
-        GROUP BY c.id, c.first_name, c.last_name, c.email, c.phone, s.period_start, s.period_end, s.inactive_interval, s.minimum_average, s.minimum_lifetime
+        GROUP BY a.client, s.period_start, s.period_end, s.inactive_interval, s.minimum_average, s.minimum_lifetime
       ), classified AS (
         SELECT *, period_bookings::numeric / period_months AS average_bookings_per_month,
           (period_bookings::numeric / period_months >= minimum_average AND total_bookings >= minimum_lifetime) AS is_regular
@@ -117,7 +127,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           COUNT(*) FILTER (WHERE is_regular AND inactive_period_bookings = 0)::integer AS lost_customers
         FROM classified
       )
-      SELECT c.client_id, c.client, c.email, c.phone,
+      SELECT c.client, c.email, c.phone,
         TO_CHAR(c.first_booking, 'YYYY-MM-DD') AS first_booking,
         TO_CHAR(c.last_booking, 'YYYY-MM-DD') AS last_booking,
         c.total_bookings, c.average_bookings_per_month, COALESCE(c.months_inactive, 0)::integer AS months_inactive,
@@ -129,7 +139,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
   }
 
   const summary = rows[0] ?? { customers_analysed: 0, regular_customers: 0, lost_customers: 0 };
-  rows = rows.filter((row) => row.client_id !== null);
+  rows = rows.filter((row) => row.client !== null);
   const exportRows: CustomerAnalyticsExportRow[] = rows.map((row) => ({ client: row.client ?? "Unknown client", email: row.email ?? "", phone: row.phone ?? "", firstBooking: formatDate(row.first_booking), lastBooking: formatDate(row.last_booking), totalBookings: Number(row.total_bookings), averageBookingsPerMonth: Number(row.average_bookings_per_month), monthsInactive: Number(row.months_inactive) }));
 
   return (
@@ -146,7 +156,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
         <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60">
           <div className="border-b border-zinc-800 px-4 py-3"><h2 className="text-lg font-medium text-zinc-100">Lost customers</h2></div>
           <div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-800 text-sm"><thead className="bg-zinc-950/70 text-left text-xs uppercase tracking-wide text-zinc-500"><tr>{["Client", "Email", "Phone", "First Booking", "Last Booking", "Total Bookings", "Average Bookings / Month", "Months Inactive", "Status"].map((header) => <th key={header} className="whitespace-nowrap px-4 py-3 font-medium">{header}</th>)}</tr></thead>
-            <tbody className="divide-y divide-zinc-800 text-zinc-300">{rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{analysed && !validationMessage ? "No lost customers match the selected filters." : "Choose your filters and select Analyse to view results."}</td></tr> : rows.map((row) => <tr key={row.client_id}><td className="px-4 py-3 text-zinc-100">{row.client}</td><td className="px-4 py-3">{row.email ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{row.phone ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.first_booking)}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.last_booking)}</td><td className="px-4 py-3">{Number(row.total_bookings).toLocaleString("en-SG")}</td><td className="px-4 py-3">{displayAverage(Number(row.average_bookings_per_month))}</td><td className="px-4 py-3">{row.months_inactive}</td><td className="px-4 py-3"><span className="rounded-full border border-red-900/80 bg-red-950/50 px-2 py-1 text-xs font-medium text-red-300">Lost</span></td></tr>)}</tbody>
+            <tbody className="divide-y divide-zinc-800 text-zinc-300">{rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{analysed && !validationMessage ? "No lost customers match the selected filters." : "Choose your filters and select Analyse to view results."}</td></tr> : rows.map((row) => <tr key={row.client}><td className="px-4 py-3 text-zinc-100">{row.client}</td><td className="px-4 py-3">{row.email ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{row.phone ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.first_booking)}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.last_booking)}</td><td className="px-4 py-3">{Number(row.total_bookings).toLocaleString("en-SG")}</td><td className="px-4 py-3">{displayAverage(Number(row.average_bookings_per_month))}</td><td className="px-4 py-3">{row.months_inactive}</td><td className="px-4 py-3"><span className="rounded-full border border-red-900/80 bg-red-950/50 px-2 py-1 text-xs font-medium text-red-300">Lost</span></td></tr>)}</tbody>
           </table></div>
         </section>
       </div>
