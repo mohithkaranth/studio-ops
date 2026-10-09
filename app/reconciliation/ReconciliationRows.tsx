@@ -11,7 +11,7 @@ const amount = (cents: number | null) => cents === null ? "—" : money.format(c
 
 export default function ReconciliationRows({ rows, emptyMessage = "No Acuity bookings found for September 2026." }: { rows: ReconciliationRow[]; emptyMessage?: string }) {
   const router = useRouter();
-  if (!rows.length) return <tr><td colSpan={10} className="px-4 py-8 text-center text-zinc-500">{emptyMessage}</td></tr>;
+  if (!rows.length) return <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{emptyMessage}</td></tr>;
   return rows.map(row => {
     const href = "/acuity/appointments/" + encodeURIComponent(row.appointmentId);
     const review = row.bankMatch.bankStatus === "Review";
@@ -29,7 +29,7 @@ export default function ReconciliationRows({ rows, emptyMessage = "No Acuity boo
       <td className="whitespace-nowrap px-4 py-3">{amount(row.stripeCents)}</td>
       <td className="whitespace-nowrap px-4 py-3">{row.bankMatch.confirmedCents !== null ? amount(row.bankMatch.confirmedCents) : review ? "Possible match" : "—"}</td>
       <td className="px-4 py-3"><span className={`inline-block whitespace-nowrap rounded-full border px-2 py-1 text-xs font-medium ${status === "Settled full" ? "border-emerald-900/80 bg-emerald-950/50 text-emerald-300" : status === "Package booking" ? "border-sky-900/80 bg-sky-950/50 text-sky-300" : status === "Settled partial" || review ? "border-amber-900/80 bg-amber-950/50 text-amber-300" : status === "No settlement" ? "border-red-900/80 bg-red-950/50 text-red-300" : "border-zinc-700 bg-zinc-800/50 text-zinc-300"}`}>{status}</span>{row.note ? <p className="mt-1 max-w-xs text-xs text-zinc-400">{row.note}</p> : null}{!review && row.status !== "Package booking" && row.costCents !== null && total !== null ? <p className="mt-1 text-xs text-zinc-400">Difference: {amount(row.costCents - total)}</p> : null}</td>
-      <td className="px-4 py-3">{row.paymentIds.length ? row.paymentIds.map((id, index) => <p key={id} className="whitespace-nowrap text-xs">{id}<br />{date.format(new Date(row.paymentDates[index]))}</p>) : "—"}</td>
+
       <td className="min-w-72 px-4 py-3">
         {row.bankMatch.candidates.length ? <div className="space-y-3">{row.bankMatch.candidates.map(candidate => <div key={candidate.transactionId} className="text-xs">
           <p className="font-medium text-zinc-100">{amount(candidate.cents)} · {candidate.date}</p>
@@ -37,7 +37,7 @@ export default function ReconciliationRows({ rows, emptyMessage = "No Acuity boo
           <p className="text-zinc-400">{candidate.dateBasis}</p>
           <p className="text-amber-300">{candidate.reason}{candidate.shared ? " · Also a candidate for another booking" : ""}</p>
           <p className="text-zinc-500">Bank transaction #{candidate.transactionId}</p>
-          <details className="mt-1"><summary className="cursor-pointer text-zinc-400">Transfer details</summary><p className="mt-1 max-w-sm whitespace-normal">{candidate.description}</p></details>
+          <details className="mt-1"><summary className="cursor-pointer text-zinc-400">Description</summary><p className="mt-1 max-w-sm whitespace-normal">{candidate.description2 ?? "—"}</p></details>
         </div>)}</div> : row.bankMatch.bankStatus === "No match" ? <p className="text-xs text-zinc-500">No candidate found using booking/session dates and payer name or email name.</p> : "—"}
       </td>
     </tr>;

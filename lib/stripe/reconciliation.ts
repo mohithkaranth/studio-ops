@@ -32,6 +32,7 @@ export type ReconciliationRow = {
   stripeCents: number | null;
   paymentIds: string[];
   paymentDates: string[];
+  stripePayments: { id: string; cents: number; date: string }[];
   status: SettlementStatus;
   note: string | null;
 };
@@ -69,17 +70,23 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
   async function request(url: string, authorization: string, allowMissing = false): Promise<unknown> {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error("The check reached its time limit. Run reconciliation again.");
-    const response = await fetch(url, {
-      headers: { Authorization: authorization, Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(Math.min(10000, remaining)),
-    });
+    const source = url.startsWith("https://api.stripe.com/") ? "Stripe" : "Acuity";
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: authorization, Accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(Math.min(10000, remaining)),
+      });
+    } catch {
+      throw new Error(source + " lookup failed or timed out. Run the check again.");
+    }
     const payload: unknown = await response.json().catch(() => null);
     if (allowMissing && response.status === 404) {
       const error = object(payload).error;
       if (error && object(error).code === "resource_missing") return null;
     }
-    if (!response.ok) throw new Error("Payment lookup failed (HTTP " + response.status + "). Run the check again.");
+    if (!response.ok) throw new Error(source + " lookup failed (HTTP " + response.status + "). Run the check again.");
     if (payload === null) throw new Error("The payment service returned an invalid response.");
     return payload;
   }
@@ -151,6 +158,7 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         stripeCents: null,
         paymentIds: [],
         paymentDates: [],
+        stripePayments: [],
         status: "Unable to check",
         note: appointment.canceled ? "Cancelled booking" : null,
       };
@@ -179,11 +187,18 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         const payments = new Map<string, StripePayment>();
         for (const reference of references) {
           const payment = await stripePayment(reference);
-          if (payment) payments.set(payment.id, payment);
+          if (payment) {
+            payments.set(payment.id, payment);
+            // Preserve retrieved evidence even if a later payment lookup fails.
+            row.paymentIds = [...payments.keys()];
+            row.paymentDates = [...payments.values()].map(item => new Date(item.created * 1000).toISOString());
+            row.stripePayments = [...payments.values()].map(item => ({ id: item.id, cents: item.cents, date: new Date(item.created * 1000).toISOString() }));
+          }
         }
         row.stripeCents = [...payments.values()].reduce((total, payment) => total + payment.cents, 0);
         row.paymentIds = [...payments.keys()];
         row.paymentDates = [...payments.values()].map(payment => new Date(payment.created * 1000).toISOString());
+        row.stripePayments = [...payments.values()].map(payment => ({ id: payment.id, cents: payment.cents, date: new Date(payment.created * 1000).toISOString() }));
         row.status = settlementStatus(row.costCents, row.stripeCents, payments.size);
         if (payments.size === 0 && [...references].some(reference => /^seti_[A-Za-z0-9]+$/.test(reference))) {
           row.note = [row.note, "Card saved only; no completed Stripe payment is recorded for this booking in Acuity."].filter(Boolean).join(". ");

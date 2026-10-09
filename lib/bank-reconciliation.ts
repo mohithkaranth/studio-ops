@@ -11,6 +11,7 @@ export type PayNowCandidate = {
   cents: number;
   payer: string;
   description: string;
+  description2: string | null;
   reason: "Booking reference" | "Name and amount" | "Name; different amount" | "Email name and amount" | "Email name; different amount";
   dateBasis: string;
   daysFromBooking: number | null;
@@ -77,7 +78,7 @@ export function matchPayNow(bookings: BankBooking[], transactions: PayNowTransac
       const closeToKnownDate = Math.abs(daysFromSession) <= 7 || (daysFromBooking !== null && Math.abs(daysFromBooking) <= 7);
       if (!reference && !((sameName || sameEmailName) && inPaymentPeriod && (sameAmount || closeToKnownDate))) continue;
       match.candidates.push({
-        transactionId: transaction.id, date: transaction.transaction_date, cents, payer, description,
+        transactionId: transaction.id, date: transaction.transaction_date, cents, payer, description, description2: transaction.description_2,
         reason: reference ? "Booking reference" : sameName
           ? sameAmount ? "Name and amount" : "Name; different amount"
           : sameAmount ? "Email name and amount" : "Email name; different amount",
