@@ -1,4 +1,4 @@
-import Link from "next/link";
+import BackToPrevious from "@/app/components/BackToPrevious";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { reconcileStripeBookings, type ReconciliationRow } from "@/lib/stripe/reconciliation";
@@ -98,7 +98,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Booking comparison</h1>
         <p className="text-sm text-zinc-400">Acuity booking #{id} · {client}</p>
       </header>
-      <Link href="/reconciliation?month=9&year=2026&run=1" prefetch={false} className="inline-block text-sm text-zinc-400 hover:text-zinc-100">← Back to Reconciliation</Link>
+      <BackToPrevious fallbackHref="/reconciliation?month=9&year=2026&run=1" />
 
       <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
