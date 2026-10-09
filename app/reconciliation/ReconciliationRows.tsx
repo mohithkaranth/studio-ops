@@ -11,7 +11,7 @@ const amount = (cents: number | null) => cents === null ? "—" : money.format(c
 
 export default function ReconciliationRows({ rows, emptyMessage = "No Acuity bookings found for September 2026." }: { rows: ReconciliationRow[]; emptyMessage?: string }) {
   const router = useRouter();
-  if (!rows.length) return <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{emptyMessage}</td></tr>;
+  if (!rows.length) return <tr><td colSpan={10} className="px-4 py-8 text-center text-zinc-500">{emptyMessage}</td></tr>;
   return rows.map(row => {
     const href = "/acuity/appointments/" + encodeURIComponent(row.appointmentId);
     const review = row.bankMatch.bankStatus === "Review";
@@ -22,6 +22,7 @@ export default function ReconciliationRows({ rows, emptyMessage = "No Acuity boo
       router.push(href);
     }}>
       <td className="px-4 py-3"><Link href={href} prefetch={false} className="font-medium text-zinc-100 underline decoration-zinc-600 underline-offset-4">{row.client}</Link><p className="text-xs text-zinc-500">#{row.appointmentId}</p>{row.email ? <p className="text-xs text-zinc-400">{row.email}</p> : null}</td>
+      <td className="whitespace-nowrap px-4 py-3">{row.createdDate ? date.format(new Date(row.createdDate)) : "—"}</td>
       <td className="whitespace-nowrap px-4 py-3">{date.format(new Date(row.appointmentDate))}<p className="text-xs text-zinc-500">{row.room ?? "—"}</p></td>
       <td className="px-4 py-3">{row.appointmentType ?? "—"}</td>
       <td className="whitespace-nowrap px-4 py-3">{amount(row.costCents)}</td>
@@ -33,10 +34,11 @@ export default function ReconciliationRows({ rows, emptyMessage = "No Acuity boo
         {row.bankMatch.candidates.length ? <div className="space-y-3">{row.bankMatch.candidates.map(candidate => <div key={candidate.transactionId} className="text-xs">
           <p className="font-medium text-zinc-100">{amount(candidate.cents)} · {candidate.date}</p>
           <p>{candidate.payer || "Payer name unavailable"}</p>
+          <p className="text-zinc-400">{candidate.dateBasis}</p>
           <p className="text-amber-300">{candidate.reason}{candidate.shared ? " · Also a candidate for another booking" : ""}</p>
           <p className="text-zinc-500">Bank transaction #{candidate.transactionId}</p>
           <details className="mt-1"><summary className="cursor-pointer text-zinc-400">Transfer details</summary><p className="mt-1 max-w-sm whitespace-normal">{candidate.description}</p></details>
-        </div>)}</div> : row.bankMatch.bankStatus === "No match" ? <p className="text-xs text-zinc-500">No candidate found by booking reference or full payer name within 7 days of the session.</p> : "—"}
+        </div>)}</div> : row.bankMatch.bankStatus === "No match" ? <p className="text-xs text-zinc-500">No candidate found using booking/session dates and payer name or email name.</p> : "—"}
       </td>
     </tr>;
   });

@@ -11,12 +11,16 @@ export type PayNowCandidate = {
   cents: number;
   payer: string;
   description: string;
-  reason: "Booking reference" | "Name and amount" | "Name; different amount";
+  reason: "Booking reference" | "Name and amount" | "Name; different amount" | "Email name and amount" | "Email name; different amount";
+  dateBasis: string;
+  daysFromBooking: number | null;
+  daysFromSession: number;
   shared: boolean;
 };
 export type BankBooking = {
   appointmentId: string;
   client: string;
+  email?: string | null;
   appointmentDate: string;
   createdDate: string | null;
   costCents: number | null;
@@ -38,6 +42,9 @@ function singaporeDay(value: string) {
 function bookingReference(text: string, id: string) {
   return /^\d+$/.test(id) && new RegExp("(^|[^0-9])" + id + "([^0-9]|$)").test(text);
 }
+function dayDifference(from: string, to: string) {
+  return Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
+}
 
 export function matchPayNow(bookings: BankBooking[], transactions: PayNowTransaction[]): Map<string, BankMatch> {
   const output = new Map<string, BankMatch>();
@@ -46,7 +53,8 @@ export function matchPayNow(bookings: BankBooking[], transactions: PayNowTransac
     output.set(booking.appointmentId, match);
     if (booking.status !== "No settlement" || booking.costCents === null || booking.costCents <= 0) continue;
     match.bankStatus = "No match";
-    const name = words(booking.client);
+    const name = [...new Set(words(booking.client))];
+    const emailNames = [...new Set(words((booking.email ?? "").split("@")[0]).filter(word => /^[a-z]{2,}$/.test(word)))];
     const session = singaporeDay(booking.appointmentDate);
     const created = booking.createdDate ? singaporeDay(booking.createdDate) : null;
     for (const transaction of transactions) {
@@ -58,17 +66,33 @@ export function matchPayNow(bookings: BankBooking[], transactions: PayNowTransac
       const payer = transaction.description_2?.match(/\bOTHER\s+(.+?)\s+20\d{6}[A-Z0-9]+\s+SGD\b/i)?.[1] ?? "";
       const payerWords = new Set(words(payer));
       const sameName = name.length >= 2 && name.every(word => payerWords.has(word));
-      const nearby = Math.abs(Date.parse(transaction.transaction_date) - Date.parse(session)) <= 7 * 86400000;
-      if (!reference && !(sameName && nearby && (!created || transaction.transaction_date >= created))) continue;
+      // Email names provide evidence for aliases, never proof of a settled payment.
+      const sameEmailName = emailNames.length >= 2 && emailNames.every(word => payerWords.has(word));
+      const daysFromSession = dayDifference(session, transaction.transaction_date);
+      const daysFromBooking = created ? dayDifference(created, transaction.transaction_date) : null;
+      const inPaymentPeriod = created
+        ? daysFromBooking! >= 0 && daysFromSession <= 7
+        : Math.abs(daysFromSession) <= 7;
+      const sameAmount = cents === booking.costCents;
+      const closeToKnownDate = Math.abs(daysFromSession) <= 7 || (daysFromBooking !== null && Math.abs(daysFromBooking) <= 7);
+      if (!reference && !((sameName || sameEmailName) && inPaymentPeriod && (sameAmount || closeToKnownDate))) continue;
       match.candidates.push({
         transactionId: transaction.id, date: transaction.transaction_date, cents, payer, description,
-        reason: reference ? "Booking reference" : cents === booking.costCents ? "Name and amount" : "Name; different amount",
+        reason: reference ? "Booking reference" : sameName
+          ? sameAmount ? "Name and amount" : "Name; different amount"
+          : sameAmount ? "Email name and amount" : "Email name; different amount",
+        dateBasis: daysFromBooking === 0 ? "On booking date"
+          : daysFromSession === 0 ? "On session date"
+          : daysFromBooking !== null && daysFromBooking > 0 && daysFromSession < 0 ? "Between booking and session"
+          : daysFromSession > 0 ? "After session" : "Before session",
+        daysFromBooking, daysFromSession,
         shared: false,
       });
     }
     match.candidates.sort((a, b) => {
-      const score = (candidate: PayNowCandidate) => candidate.reason === "Booking reference" ? 0 : candidate.reason === "Name and amount" ? 1 : 2;
-      return score(a) - score(b) || a.date.localeCompare(b.date) || a.transactionId.localeCompare(b.transactionId);
+      const score = (candidate: PayNowCandidate) => candidate.reason === "Booking reference" ? 0 : candidate.cents === booking.costCents ? 1 : 2;
+      const proximity = (candidate: PayNowCandidate) => Math.min(Math.abs(candidate.daysFromSession), candidate.daysFromBooking === null ? Infinity : Math.abs(candidate.daysFromBooking));
+      return score(a) - score(b) || proximity(a) - proximity(b) || a.date.localeCompare(b.date) || a.transactionId.localeCompare(b.transactionId);
     });
     if (match.candidates.length) match.bankStatus = "Review";
   }

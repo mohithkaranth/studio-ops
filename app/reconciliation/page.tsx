@@ -66,7 +66,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
             </div>;
           })}
         </section>
-        <p className="text-sm text-zinc-400">{rows.length} bookings in September 2026, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside September. PayNow candidates are checked only for bookings with no matched Stripe payment. A payer-name match is not proof of settlement; candidates require review. Only an unambiguous booking reference counts as confirmed PayNow payment. Click a booking row to view its complete Acuity record.</p>
+        <p className="text-sm text-zinc-400">{rows.length} bookings in September 2026, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside September. PayNow candidates are checked only for bookings with no matched Stripe payment. The bank search covers the booking date through 7 days after the session. If the booking date is missing, it uses 7 days around the session. Payer names and names in booking emails help find candidates. Different amounts are considered only within 7 days of booking or session; all name-based candidates require review. Only an unambiguous booking reference counts as confirmed PayNow payment. Click a booking row to view its complete Acuity record.</p>
         <ReconciliationTable rows={rows} />
       </> : !run ? <p className="text-sm text-zinc-400">Select Reconcile to check September bookings against Stripe, then look for PayNow candidates in your uploaded bank statements.</p> : null}
       <Link href="/" className="inline-block text-sm text-zinc-400 hover:text-zinc-100">← Back to Dashboard</Link>
