@@ -2,6 +2,7 @@ export type SettlementStatus =
   | "Settled full"
   | "Settled partial"
   | "No settlement"
+  | "Package booking"
   | "Unable to check";
 
 export function sgdCents(value: string | number | null): number | null {

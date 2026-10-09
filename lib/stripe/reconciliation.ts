@@ -152,8 +152,13 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         paymentIds: [],
         paymentDates: [],
         status: "Unable to check",
-        note: appointment.canceled ? "Cancelled booking" : appointment.certificate_code ? "Package/certificate booking" : null,
+        note: appointment.canceled ? "Cancelled booking" : null,
       };
+      if (appointment.certificate_code) {
+        row.status = "Package booking";
+        rows[index] = row;
+        continue;
+      }
       try {
         if (row.costCents === null) throw new Error("Acuity booking cost is missing or invalid.");
         const payload = await request(

@@ -50,8 +50,8 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
       </form>
       {error ? <p role="alert" className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">{error}</p> : null}
       {run && !error ? <>
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {(["Settled full", "Settled partial", "No settlement", "Review PayNow", "Unable to check"] as const).map(status =>
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {(["Settled full", "Settled partial", "No settlement", "Review PayNow", "Package booking", "Unable to check"] as const).map(status =>
             <div key={status} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"><p className="text-sm text-zinc-400">{status}</p><p className="mt-2 text-2xl font-semibold text-zinc-50">{rows.filter(row => (row.bankMatch.bankStatus === "Review" ? "Review PayNow" : row.status) === status).length}</p></div>
           )}
         </section>
