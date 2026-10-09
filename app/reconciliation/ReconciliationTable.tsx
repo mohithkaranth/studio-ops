@@ -11,9 +11,9 @@ export default function ReconciliationTable({ rows, title = "Booking details", e
       <h2 className="text-lg font-medium text-zinc-100">{title}</h2>
       <p className="text-xs text-zinc-500">{rows.length.toLocaleString("en-SG")} bookings</p>
     </div>
-    <div className="overflow-x-auto">
+    <div className="max-h-[65vh] overflow-auto" tabIndex={0} role="region" aria-label={title + " — scroll horizontally and vertically"}>
       <table className="min-w-full divide-y divide-zinc-800 text-sm">
-        <thead className="bg-zinc-950/70 text-left text-xs uppercase tracking-wide text-zinc-500">
+        <thead className="sticky top-0 z-10 bg-zinc-950 text-left text-xs uppercase tracking-wide text-zinc-500">
           <tr>{["Booking", "Booked on", "Session / Room", "Type", "Acuity cost", "Stripe paid", "Confirmed PayNow", "Status", "PayNow evidence"].map(title =>
             <th key={title} className="whitespace-nowrap px-4 py-3 font-medium">{title}</th>
           )}</tr>
