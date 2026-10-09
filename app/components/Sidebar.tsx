@@ -11,6 +11,7 @@ const navItems = [
   { href: "/studio-chat", label: "Studio Chat" },
   { href: "/acuity-sync", label: "Sync Acuity Data" },
   { href: "/bank-statements", label: "Upload Bank Statements" },
+  { href: "/payment-reconciliation", label: "Payment Reconciliation" },
 ];
 
 function NavLinks({ onClick }: { onClick?: () => void }) {
