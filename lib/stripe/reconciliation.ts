@@ -83,7 +83,10 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
       stripeCache.set(reference, (async () => {
         let charge: unknown;
         const auth = "Bearer " + stripeKey;
-        if (/^(ch|py)_[A-Za-z0-9]+$/.test(reference)) {
+        if (/^seti_[A-Za-z0-9]+$/.test(reference)) {
+          // SetupIntents save payment details; they do not collect any money.
+          return null;
+        } else if (/^(ch|py)_[A-Za-z0-9]+$/.test(reference)) {
           charge = await request("https://api.stripe.com/v1/charges/" + reference, auth, true);
         } else if (/^pi_[A-Za-z0-9]+$/.test(reference)) {
           const intent = await request("https://api.stripe.com/v1/payment_intents/" + reference + "?expand[]=latest_charge", auth, true);
@@ -168,6 +171,9 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         row.paymentIds = [...payments.keys()];
         row.paymentDates = [...payments.values()].map(payment => new Date(payment.created * 1000).toISOString());
         row.status = settlementStatus(row.costCents, row.stripeCents, payments.size);
+        if (payments.size === 0 && [...references].some(reference => /^seti_[A-Za-z0-9]+$/.test(reference))) {
+          row.note = [row.note, "Card saved only; no completed Stripe payment is recorded for this booking in Acuity."].filter(Boolean).join(". ");
+        }
       } catch (error) {
         row.note = [row.note, error instanceof Error ? error.message : "Payment lookup failed. Run the check again."].filter(Boolean).join(". ");
       }
