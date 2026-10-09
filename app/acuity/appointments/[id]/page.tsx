@@ -68,10 +68,10 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
   let row: ReconciliationRow | null = null;
   let issue: string | null = null;
   if (!record.certificate_code) {
-    if (record.session_month !== 9 || record.session_year !== 2026) issue = "Reconciliation is currently available for September 2026 bookings.";
+    if (record.session_year < 2026) issue = "Reconciliation is available for bookings from January 2026 onward.";
     else {
       try {
-        row = (await reconcileStripeBookings(2026, 9)).find(item => item.appointmentId === id) ?? null;
+        row = (await reconcileStripeBookings(record.session_year, record.session_month)).find(item => item.appointmentId === id) ?? null;
         if (!row) issue = "This booking could not be included in the reconciliation results.";
       } catch {
         issue = "Payment evidence could not be checked. Return to Reconciliation and try again.";
@@ -98,7 +98,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Booking comparison</h1>
         <p className="text-sm text-zinc-400">Acuity booking #{id} · {client}</p>
       </header>
-      <BackToPrevious fallbackHref="/reconciliation?month=9&year=2026&run=1" />
+      <BackToPrevious fallbackHref={record.session_year >= 2026 ? `/reconciliation?month=${record.session_month}&year=${record.session_year}&run=1` : "/reconciliation"} />
 
       <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">

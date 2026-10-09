@@ -2,7 +2,7 @@ import "server-only";
 
 import { sql } from "@/lib/db";
 import { matchPayNow, type PayNowTransaction, type BankMatch } from "@/lib/bank-reconciliation";
-import { septemberRange, settlementStatus, sgdCents, type SettlementStatus } from "./reconciliation-model";
+import { monthRange, settlementStatus, sgdCents, type SettlementStatus } from "./reconciliation-model";
 
 type Appointment = {
   acuity_appointment_id: string;
@@ -45,7 +45,7 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 export async function reconcileStripeBookings(year: number, month: number): Promise<ReconciliationRow[]> {
-  const range = septemberRange(year, month);
+  const range = monthRange(year, month);
   const stripeKey = process.env.STRIPE_SECRET_KEY?.trim();
   const acuityUser = process.env.ACUITY_USER_ID?.trim();
   const acuityKey = process.env.ACUITY_API_KEY?.trim();

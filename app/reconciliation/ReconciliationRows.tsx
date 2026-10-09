@@ -10,7 +10,7 @@ const date = new Intl.DateTimeFormat("en-SG", { timeZone: "Asia/Singapore", day:
 const time = new Intl.DateTimeFormat("en-SG", { timeZone: "Asia/Singapore", hour: "2-digit", minute: "2-digit" });
 const amount = (cents: number | null) => cents === null ? "—" : money.format(cents / 100);
 
-export default function ReconciliationRows({ rows, emptyMessage = "No Acuity bookings found for September 2026." }: { rows: ReconciliationRow[]; emptyMessage?: string }) {
+export default function ReconciliationRows({ rows, emptyMessage = "No bookings found for the selected period." }: { rows: ReconciliationRow[]; emptyMessage?: string }) {
   const router = useRouter();
   if (!rows.length) return <tr><td colSpan={8} className="px-4 py-8 text-center text-zinc-500">{emptyMessage}</td></tr>;
   return rows.map(row => {

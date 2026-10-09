@@ -19,9 +19,14 @@ export function settlementStatus(cost: number, payment: number, records: number)
   return cost === payment ? "Settled full" : "Settled partial";
 }
 
-export function septemberRange(year: number, month: number) {
-  if (year !== 2026 || month !== 9) {
-    throw new Error("Testing is currently limited to September 2026.");
+export function monthRange(year: number, month: number) {
+  if (!Number.isInteger(year) || year < 2026 || year > 9998 || !Number.isInteger(month) || month < 1 || month > 12) {
+    throw new Error("Choose a valid month and year from January 2026 onward.");
   }
-  return { from: "2026-09-01T00:00:00+08:00", to: "2026-10-01T00:00:00+08:00" };
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  return {
+    from: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01T00:00:00+08:00`,
+    to: `${String(nextYear).padStart(4, "0")}-${String(nextMonth).padStart(2, "0")}-01T00:00:00+08:00`,
+  };
 }
