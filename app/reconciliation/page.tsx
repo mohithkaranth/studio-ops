@@ -1,3 +1,4 @@
+import ReconciliationRows from "./ReconciliationRows";
 import { checkStripeConnection } from "@/lib/stripe/connection";
 import { reconcileStripeBookings, type ReconciliationRow } from "@/lib/stripe/reconciliation";
 
@@ -7,10 +8,7 @@ export const maxDuration = 300;
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD" });
-const date = new Intl.DateTimeFormat("en-SG", { timeZone: "Asia/Singapore", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
-const amount = (cents: number | null) => cents === null ? "—" : money.format(cents / 100);
 
 export default async function ReconciliationPage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
@@ -34,7 +32,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
     <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-10 sm:px-8 lg:px-10">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Reconciliation</h1>
-        <p className="text-sm text-zinc-400">Compare Acuity booking costs with Stripe payments. Testing is limited to September 2026.</p>
+        <p className="text-sm text-zinc-400">Compare September Acuity bookings with Stripe payments, then review PayNow candidates for bookings without a Stripe payment.</p>
         <p className="text-sm text-zinc-300">Stripe connection: <span className={connected ? "font-semibold text-emerald-400" : "font-semibold text-red-400"}>{connected ? "Yes" : "No"}</span></p>
       </header>
       <form action="/reconciliation" method="get" className="flex flex-wrap items-end gap-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -52,31 +50,23 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
       </form>
       {error ? <p role="alert" className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">{error}</p> : null}
       {run && !error ? <>
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {(["Settled full", "Settled partial", "No settlement", "Unable to check"] as const).map(status =>
-            <div key={status} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"><p className="text-sm text-zinc-400">{status}</p><p className="mt-2 text-2xl font-semibold text-zinc-50">{rows.filter(row => row.status === status).length}</p></div>
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {(["Settled full", "Settled partial", "No settlement", "Review PayNow", "Unable to check"] as const).map(status =>
+            <div key={status} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4"><p className="text-sm text-zinc-400">{status}</p><p className="mt-2 text-2xl font-semibold text-zinc-50">{rows.filter(row => (row.bankMatch.bankStatus === "Review" ? "Review PayNow" : row.status) === status).length}</p></div>
           )}
         </section>
-        <p className="text-sm text-zinc-400">{rows.length} bookings in September 2026, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside September. PayNow is not included yet.</p>
+        <p className="text-sm text-zinc-400">{rows.length} bookings in September 2026, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside September. PayNow candidates are checked only for bookings with no matched Stripe payment. A payer-name match is not proof of settlement; candidates require review. Only an unambiguous booking reference counts as confirmed PayNow payment. Click a booking row to view its complete Acuity record.</p>
         <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60"><div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-zinc-800 text-sm">
             <thead className="bg-zinc-950 text-left text-xs uppercase text-zinc-400"><tr>
-              {["Booking", "Session / Room", "Acuity cost", "Stripe paid", "Difference", "Status", "Stripe payment / Date"].map(title => <th key={title} className="whitespace-nowrap px-4 py-3">{title}</th>)}
+              {["Booking", "Session / Room", "Type", "Acuity cost", "Stripe paid", "Confirmed PayNow", "Status", "Stripe payment / Date", "PayNow evidence"].map(title => <th key={title} className="whitespace-nowrap px-4 py-3">{title}</th>)}
             </tr></thead>
             <tbody className="divide-y divide-zinc-800 text-zinc-300">
-              {rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center">No Acuity bookings found for September 2026.</td></tr> : rows.map(row => <tr key={row.appointmentId}>
-                <td className="px-4 py-3"><p className="font-medium text-zinc-100">{row.client}</p><p className="text-xs text-zinc-500">#{row.appointmentId}</p>{row.email ? <p className="text-xs text-zinc-400">{row.email}</p> : null}</td>
-                <td className="whitespace-nowrap px-4 py-3">{date.format(new Date(row.appointmentDate))}<p className="text-xs text-zinc-500">{row.room ?? "—"}</p></td>
-                <td className="whitespace-nowrap px-4 py-3">{amount(row.costCents)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{amount(row.stripeCents)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{amount(row.costCents === null || row.stripeCents === null ? null : row.costCents - row.stripeCents)}</td>
-                <td className="px-4 py-3"><span className={row.status === "Settled full" ? "text-emerald-400" : row.status === "Settled partial" ? "text-amber-400" : row.status === "No settlement" ? "text-red-400" : "text-zinc-300"}>{row.status}</span>{row.note ? <p className="mt-1 max-w-xs text-xs text-zinc-400">{row.note}</p> : null}</td>
-                <td className="px-4 py-3">{row.paymentIds.length ? row.paymentIds.map((id, index) => <p key={id} className="whitespace-nowrap text-xs">{id}<br />{date.format(new Date(row.paymentDates[index]))}</p>) : "—"}</td>
-              </tr>)}
+              <ReconciliationRows rows={rows} />
             </tbody>
           </table>
         </div></section>
-      </> : !run ? <p className="text-sm text-zinc-400">Select Reconcile to check September bookings. Payments are matched using the Stripe transaction references attached to each Acuity booking.</p> : null}
+      </> : !run ? <p className="text-sm text-zinc-400">Select Reconcile to check September bookings against Stripe, then look for PayNow candidates in your uploaded bank statements.</p> : null}
     </main>
   );
 }

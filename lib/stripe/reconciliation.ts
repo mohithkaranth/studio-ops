@@ -1,6 +1,7 @@
 import "server-only";
 
 import { sql } from "@/lib/db";
+import { matchPayNow, type PayNowTransaction, type BankMatch } from "@/lib/bank-reconciliation";
 import { septemberRange, settlementStatus, sgdCents, type SettlementStatus } from "./reconciliation-model";
 
 type Appointment = {
@@ -9,6 +10,8 @@ type Appointment = {
   client_last_name: string | null;
   client_email: string | null;
   appointment_datetime: Date | string;
+  created_datetime: Date | string | null;
+  appointment_type_name: string | null;
   calendar_name: string | null;
   price: string | number | null;
   canceled: boolean | null;
@@ -21,6 +24,9 @@ export type ReconciliationRow = {
   client: string;
   email: string | null;
   appointmentDate: string;
+  createdDate: string | null;
+  appointmentType: string | null;
+  bankMatch: BankMatch;
   room: string | null;
   costCents: number | null;
   stripeCents: number | null;
@@ -48,7 +54,7 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
 
   const appointments = await sql<Appointment[]>`
     SELECT acuity_appointment_id, client_first_name, client_last_name, client_email,
-      appointment_datetime, calendar_name, price, canceled, certificate_code
+      appointment_datetime, created_datetime, appointment_type_name, calendar_name, price, canceled, certificate_code
     FROM acuity_appointments
     WHERE appointment_datetime >= ${range.from}::timestamptz
       AND appointment_datetime < ${range.to}::timestamptz
@@ -137,6 +143,9 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         client: [appointment.client_first_name, appointment.client_last_name].filter(Boolean).join(" ") || appointment.client_email || "Unknown",
         email: appointment.client_email,
         appointmentDate: new Date(appointment.appointment_datetime).toISOString(),
+        createdDate: appointment.created_datetime ? new Date(appointment.created_datetime).toISOString() : null,
+        appointmentType: appointment.appointment_type_name,
+        bankMatch: { candidates: [], confirmedCents: null, bankStatus: "Not checked" },
         room: appointment.calendar_name,
         costCents: sgdCents(appointment.price),
         stripeCents: null,
@@ -191,6 +200,30 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
     row.status = "Unable to check";
     row.stripeCents = null;
     row.note = "Stripe payment is linked to multiple bookings and needs allocation review.";
+  }
+  if (rows.some(row => row.status === "No settlement" && (row.costCents ?? 0) > 0)) {
+    try {
+      const transactions = await sql<PayNowTransaction[]>`
+        SELECT t.id::text, t.transaction_date::text, t.description_1, t.description_2, t.credit::text
+        FROM bank_transactions t
+        JOIN bank_statement_uploads u ON u.id = t.upload_id
+        WHERE t.credit > 0 AND UPPER(u.currency) = 'SGD'
+          AND (t.description_1 ILIKE '%paynow%' OR t.description_2 ILIKE '%paynow%')
+        ORDER BY t.transaction_date, t.id
+      `;
+      const matches = matchPayNow(rows, transactions);
+      for (const row of rows) {
+        row.bankMatch = matches.get(row.appointmentId)!;
+        if (row.bankMatch.confirmedCents !== null && row.costCents !== null) {
+          row.status = settlementStatus(row.costCents, row.bankMatch.confirmedCents, 1);
+        }
+      }
+    } catch {
+      for (const row of rows) if (row.status === "No settlement" && (row.costCents ?? 0) > 0) {
+        row.status = "Unable to check";
+        row.note = [row.note, "Bank transaction lookup failed. Run reconciliation again."].filter(Boolean).join(". ");
+      }
+    }
   }
   return rows;
 }
