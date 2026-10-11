@@ -20,6 +20,7 @@ type Appointment = {
   appointment_datetime: Date | string;
   price: string | null;
   certificate_code: string | null;
+  raw_json: Record<string, unknown> | null;
   canceled: boolean | null;
   session_month: number;
   session_year: number;
@@ -55,7 +56,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
   const records = await sql<Appointment[]>`
     SELECT acuity_appointment_id, client_first_name, client_last_name, client_email, client_phone,
       appointment_type_name, calendar_name, created_datetime, appointment_datetime,
-      price::text, certificate_code, canceled,
+      price::text, certificate_code, canceled, raw_json,
       EXTRACT(MONTH FROM appointment_datetime AT TIME ZONE 'Asia/Singapore')::integer AS session_month,
       EXTRACT(YEAR FROM appointment_datetime AT TIME ZONE 'Asia/Singapore')::integer AS session_year
     FROM acuity_appointments WHERE acuity_appointment_id = ${id} LIMIT 1
@@ -91,6 +92,15 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
   const clientFields: [string, string | null][] = [
     ["Client name", client], ["Email", record.client_email], ["Telephone", record.client_phone],
   ];
+  const sourceLabels: Record<string, string> = {
+    price: "Original price", priceSold: "Price booked", amountPaid: "Amount paid",
+    paid: "Marked paid in Acuity", addons: "Extras", addOns: "Extras",
+    certificate: "Package / Certificate", certificateCode: "Package / Certificate",
+  };
+  const priceDetails: [string, string | null][] = Object.entries(record.raw_json ?? {})
+    .filter(([key]) => /price|amount|cost|total|addon|discount|certificate|^paid$/i.test(key))
+    .map(([key, value]) => [sourceLabels[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2"),
+      value === null || value === undefined ? null : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)]);
 
   return <main className="min-h-screen w-full bg-zinc-950 text-zinc-100">
     <div className="mx-auto w-full max-w-7xl space-y-8 px-6 py-10 sm:px-8 lg:px-10">
@@ -116,6 +126,10 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
             ...(record.certificate_code ? [["Package / Certificate code", record.certificate_code] as [string, string]] : []),
           ]} />
           {record.canceled ? <p className="text-sm text-amber-300">This booking is cancelled.</p> : null}
+          {priceDetails.length ? <details className="border-t border-zinc-800 pt-4">
+            <summary className="cursor-pointer text-sm text-zinc-300">Pricing details from Acuity</summary>
+            <div className="mt-4"><Fields items={priceDetails} /></div>
+          </details> : null}
         </div>
       </section>
 
