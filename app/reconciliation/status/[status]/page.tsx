@@ -6,6 +6,8 @@ import { availablePeriod, defaultPeriod, periodLabel } from "@/lib/reconciliatio
 import { reconciliationStatuses, displayReconciliationStatus } from "@/lib/reconciliation-status";
 import { reconcileStripeBookings, type ReconciliationRow } from "@/lib/stripe/reconciliation";
 import { getUnsettledTotals } from "@/lib/unsettled-totals-data";
+import { getBankHistory } from "@/lib/bank-reconciliation-history";
+import Link from "next/link";
 
 const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD" });
 
@@ -32,6 +34,7 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
   let rows: ReconciliationRow[] = [];
   let totals: Awaited<ReturnType<typeof getUnsettledTotals>> | null = null;
   let totalsError: string | null = null;
+  let uncheckedMonths = 0;
   let error: string | null = null;
   if (!validPeriod) error = "Choose an available booking period from January 2026 onward.";
   else {
@@ -39,7 +42,10 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
       const allRows = await reconcileStripeBookings(year, month);
       rows = allRows.filter(row => displayReconciliationStatus(row) === selected.label);
       if (status === "no-settlement") {
-        try { totals = await getUnsettledTotals(rows, allRows); }
+        try {
+          totals = await getUnsettledTotals(rows);
+          uncheckedMonths = (await getBankHistory(year, month)).months.filter(item => item.status !== "complete").length;
+        }
         catch { totalsError = "Unaccounted PayNow credits could not be loaded. Refresh to try again."; }
       }
     } catch (issue) {
@@ -69,12 +75,16 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Unaccounted PayNow credits</p>
               <p className="mt-2 text-2xl font-semibold text-zinc-50">{totals ? money.format(totals.payNowCents / 100) : "Unavailable"}</p>
-              {totals ? <p className="mt-2 text-xs text-zinc-400">{totals.creditCount.toLocaleString("en-SG")} separate credits · each counted once</p> : null}
+              {totals ? <>
+                <p className="mt-2 text-xs text-zinc-400">{totals.creditCount.toLocaleString("en-SG")} separate credits · each counted once</p>
+                {totals.windows.length ? <p className="mt-1 text-xs text-zinc-400">Payment windows span {totals.windows.map(window => window.from).sort()[0]} to {totals.windows.map(window => window.to).sort().at(-1)}</p> : null}
+              </> : null}
             </div>
           </> : null}
         </section>
         {status === "no-settlement" ? <div className="space-y-2 text-sm text-zinc-400">
-          <p>PayNow total includes uploaded SGD credits between the booking and session dates, inclusive, for the bookings below. Payer names and individual payment amounts do not restrict this total. Credits already confirmed or linked to booking references in any period are excluded. This comparison does not settle individual bookings.</p>
+          <p>PayNow total includes the unallocated balance of uploaded SGD credits between the booking and session dates, inclusive, for the bookings below. Payer names and individual payment amounts do not restrict this total. Saved allocations from every month are deducted; possible matches are not confirmed payments. This comparison does not settle individual bookings.</p>
+          {uncheckedMonths ? <p role="alert" className="text-amber-300">Provisional total: {uncheckedMonths} month(s) of payment history still need checking. <Link className="underline" href={`/reconciliation?month=${month}&year=${year}`}>Check / resume PayNow history</Link>.</p> : null}
           {totals?.missingWindows ? <p role="alert" className="text-amber-300">{totals.missingWindows} booking(s) have missing or invalid booking dates. Their payment windows cannot be included in the PayNow total.</p> : null}
           {totalsError ? <p role="alert" className="text-amber-300">{totalsError}</p> : null}
         </div> : null}

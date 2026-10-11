@@ -159,7 +159,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
 
           {row && (status === "Review PayNow" || confirmedBank !== null) ? <div className="space-y-4">
             {status === "Review PayNow" ? <p className="text-sm text-amber-300">These transfers are possible matches. They have not been counted as settled payments.</p> : null}
-            {row.bankMatch.candidates.filter(candidate => confirmedBank === null || candidate.reason === "Booking reference").map(candidate => {
+            {row.bankMatch.candidates.filter(candidate => confirmedBank === null || candidate.reason === "Booking reference" || candidate.reason === "Saved confirmation").map(candidate => {
               const candidateDifference = costCents === null ? null : costCents - candidate.cents;
               return <div key={candidate.transactionId} className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-4">
                 <Fields items={[
@@ -167,6 +167,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
                   ["Payer name", candidate.payer],
                   ["Payment date", dateOnly.format(new Date(candidate.date + "T00:00:00+08:00"))],
                   ["Payment amount", amount(candidate.cents)],
+                  ...(candidate.allocatedCents !== undefined ? [["Allocated to this booking", amount(candidate.allocatedCents)] as [string, string]] : []),
                   ["Match evidence", candidate.reason],
                   ["Date relation", candidate.dateBasis],
                   ...(status === "Review PayNow" ? [["Amount difference", amount(candidateDifference)] as [string, string]] : []),

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import BankAllocationEditor, { type StatementAllocation } from './BankAllocationEditor';
 
 type Summary = {
   statement_start_date: string;
@@ -14,6 +15,10 @@ type Summary = {
 } | null;
 
 type Tx = {
+  id: string;
+  allocated_cents: number;
+  remaining_cents: number;
+  allocations: StatementAllocation[];
   transaction_date: string;
   value_date: string | null;
   description_1: string | null;
@@ -28,17 +33,33 @@ export default function BankStatementsPage() {
   const [transactions, setTransactions] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string>("");
+  const [uploads, setUploads] = useState<{ id: number; from: string; to: string }[]>([]);
+  const [selectedUpload, setSelectedUpload] = useState('');
 
-  const loadData = async () => {
-    const res = await fetch("/api/bank-statements/summary", { cache: "no-store" });
-    const data = await res.json();
+  const applyData = useCallback((data: { latest: (NonNullable<Summary> & { id: number }) | null; transactions: Tx[]; uploads: { id: number; from: string; to: string }[] }) => {
     setSummary(data.latest);
     setTransactions(data.transactions);
+    setUploads(data.uploads);
+    setSelectedUpload(data.latest ? String(data.latest.id) : '');
+  }, []);
+
+  const loadData = async (uploadId = selectedUpload) => {
+    const res = await fetch(`/api/bank-statements/summary${uploadId ? `?uploadId=${encodeURIComponent(uploadId)}` : ''}`, { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? 'Unable to load bank statements.');
+    applyData(data);
   };
 
   useEffect(() => {
-    void loadData();
-  }, []);
+    const controller = new AbortController();
+    fetch('/api/bank-statements/summary', { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? 'Unable to load bank statements.');
+        return data;
+      }).then(applyData).catch(error => { if (!controller.signal.aborted) setMessage(error.message); });
+    return () => controller.abort();
+  }, [applyData]);
 
   const onUpload = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -70,7 +91,7 @@ export default function BankStatementsPage() {
 
     setMessage("Upload complete.");
     form.reset();
-    await loadData();
+    await loadData('');
     setLoading(false);
   };
 
@@ -95,6 +116,11 @@ export default function BankStatementsPage() {
         {message ? <p className="mt-3 text-sm text-zinc-100">{message}</p> : null}
       </form>
 
+      {uploads.length ? <label className="block text-sm text-zinc-300">Statement to review<select value={selectedUpload} onChange={event => {
+        void loadData(event.target.value).catch(error => setMessage(error.message));
+      }} className="mt-2 block rounded border border-zinc-700 bg-zinc-900 p-2">
+        {uploads.map(upload => <option key={upload.id} value={upload.id}>{upload.from} to {upload.to}</option>)}
+      </select></label> : null}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card title="Statement Period" value={summary ? `${summary.statement_start_date} → ${summary.statement_end_date}` : "-"} />
         <Card title="Account Number" value={summary?.account_number ?? "-"} />
@@ -115,12 +141,13 @@ export default function BankStatementsPage() {
                 <th className="px-4 py-3 text-right">Debit</th>
                 <th className="px-4 py-3 text-right">Credit</th>
                 <th className="px-4 py-3 text-right">Running Balance</th>
+                <th className="px-4 py-3 text-left">Reconciliation</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
               {transactions.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-5 text-zinc-300" colSpan={6}>No transactions uploaded yet.</td>
+                  <td className="px-4 py-5 text-zinc-300" colSpan={7}>No transactions uploaded yet.</td>
                 </tr>
               ) : (
                 transactions.map((tx, index) => (
@@ -131,6 +158,10 @@ export default function BankStatementsPage() {
                     <td className="px-4 py-3 text-right">{tx.debit ?? ""}</td>
                     <td className="px-4 py-3 text-right">{tx.credit ?? ""}</td>
                     <td className="px-4 py-3 text-right">{tx.running_balance ?? ""}</td>
+                    <td className="px-4 py-3">{Number(tx.credit) > 0 && /paynow/i.test([tx.description_1, tx.description_2].join(' ')) ? <>
+                      <span className={tx.allocated_cents > 0 ? 'text-emerald-300' : 'text-zinc-400'}>{tx.allocated_cents > 0 ? tx.remaining_cents === 0 ? 'Reconciled' : 'Partly reconciled' : 'Unreconciled'}</span>
+                      <BankAllocationEditor transactionId={tx.id} allocations={tx.allocations} remainingCents={tx.remaining_cents} onChange={loadData} />
+                    </> : '—'}</td>
                   </tr>
                 ))
               )}

@@ -3,6 +3,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { matchPayNow, type PayNowTransaction, type BankMatch } from "@/lib/bank-reconciliation";
 import { monthRange, settlementStatus, sgdCents, type SettlementStatus } from "./reconciliation-model";
+import { readBankAllocations, saveBankAllocation, bankTransactionKey } from "@/lib/bank-allocations";
 
 type Appointment = {
   acuity_appointment_id: string;
@@ -61,6 +62,7 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
       AND appointment_datetime < ${range.to}::timestamptz
     ORDER BY appointment_datetime, acuity_appointment_id
   `;
+  const savedBefore = await readBankAllocations();
 
   // Match exact processor transaction IDs, irrespective of the date payment was made.
   const deadline = Date.now() + 240000;
@@ -224,25 +226,47 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
   if (rows.some(row => row.status === "No settlement" && (row.costCents ?? 0) > 0)) {
     try {
       const transactions = await sql<PayNowTransaction[]>`
-        SELECT t.id::text, t.transaction_date::text, t.description_1, t.description_2, t.credit::text
+        SELECT t.id::text, t.transaction_date::text, t.description_1, t.description_2, t.credit::text,
+          ${bankTransactionKey} as transaction_key
         FROM bank_transactions t
         JOIN bank_statement_uploads u ON u.id = t.upload_id
-        WHERE t.credit > 0 AND UPPER(u.currency) = 'SGD'
+        WHERE t.credit > 0 AND coalesce(t.debit, 0) = 0 AND UPPER(u.currency) = 'SGD'
           AND (t.description_1 ILIKE '%paynow%' OR t.description_2 ILIKE '%paynow%')
         ORDER BY t.transaction_date, t.id
       `;
-      const matches = matchPayNow(rows, transactions);
+      const allocatedKeys = new Set(savedBefore.map(item => item.transactionKey));
+      const matches = matchPayNow(rows, transactions.filter(item => !allocatedKeys.has(item.transaction_key ?? '')));
       for (const row of rows) {
         row.bankMatch = matches.get(row.appointmentId)!;
-        if (row.bankMatch.confirmedCents !== null && row.costCents !== null) {
-          row.status = settlementStatus(row.costCents, row.bankMatch.confirmedCents, 1);
+        if (row.bankMatch.confirmedCents !== null) {
+          for (const candidate of row.bankMatch.candidates.filter(item => item.reason === "Booking reference" && !item.shared)) {
+            await saveBankAllocation({ transactionId: candidate.transactionId, appointmentId: row.appointmentId,
+              cents: candidate.cents, method: "booking_reference" });
+          }
         }
+        // Only persisted evidence counts as confirmed. A cross-month ownership conflict,
+        // prior release, or saved manual decision must override this month's matcher.
+        row.bankMatch.confirmedCents = null;
+        row.bankMatch.bankStatus = row.bankMatch.candidates.length ? "Review" : "No match";
       }
     } catch {
       for (const row of rows) if (row.status === "No settlement" && (row.costCents ?? 0) > 0) {
         row.status = "Unable to check";
         row.note = [row.note, "Bank transaction lookup failed. Run reconciliation again."].filter(Boolean).join(". ");
       }
+    }
+  }
+  const savedAfter = await readBankAllocations();
+  for (const row of rows) {
+    const allocations = savedAfter.filter(item => item.appointmentId === row.appointmentId);
+    if (!allocations.length || row.status === "Package booking") continue;
+    row.bankMatch = { bankStatus: "Confirmed", confirmedCents: allocations.reduce((sum, item) => sum + item.cents, 0),
+      candidates: allocations.map(item => ({ transactionId: item.transactionId, date: item.date,
+        cents: item.creditCents, allocatedCents: item.cents, payer: "", description: item.description,
+        description2: item.description2, reason: "Saved confirmation", dateBasis: "Saved payment allocation",
+        daysFromBooking: null, daysFromSession: 0, shared: false })) };
+    if (row.stripeCents !== null && row.costCents !== null && row.status !== "Unable to check") {
+      row.status = settlementStatus(row.costCents, row.stripeCents + row.bankMatch.confirmedCents!, 1);
     }
   }
   return rows;
