@@ -4,6 +4,7 @@ export type PayNowTransaction = {
   description_1: string | null;
   description_2: string | null;
   credit: string;
+  transaction_key?: string;
 };
 export type PayNowCandidate = {
   transactionId: string;
@@ -12,7 +13,8 @@ export type PayNowCandidate = {
   payer: string;
   description: string;
   description2: string | null;
-  reason: "Booking reference" | "Name and amount" | "Name; different amount" | "Email name and amount" | "Email name; different amount";
+  reason: "Booking reference" | "Name and amount" | "Name; different amount" | "Email name and amount" | "Email name; different amount" | "Saved confirmation";
+  allocatedCents?: number;
   dateBasis: string;
   daysFromBooking: number | null;
   daysFromSession: number;

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import ReconciliationTable from "./ReconciliationTable";
 import ReconciliationFilters from "./ReconciliationFilters";
+import BankHistoryCheck from "./BankHistoryCheck";
 import { getReconciliationPeriods, getBankStatementCoverage } from "@/lib/reconciliation-period-data";
 import { availablePeriod, defaultPeriod, periodLabel } from "@/lib/reconciliation-period";
 import { reconciliationStatuses, displayReconciliationStatus } from "@/lib/reconciliation-status";
@@ -44,6 +45,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
         <p className="text-sm text-zinc-300">Stripe connection: <span className={connected ? "font-semibold text-emerald-400" : "font-semibold text-red-400"}>{connected ? "Yes" : "No"}</span></p>
       </header>
       {fallback ? <ReconciliationFilters key={`${selectedYear}-${selectedMonth}`} periods={periods} initialYear={selectedYear} initialMonth={selectedMonth} /> : <p className="text-sm text-zinc-400">No Acuity bookings are available from January 2026 onward.</p>}
+      <BankHistoryCheck key={`history-${selectedYear}-${selectedMonth}`} year={selectedYear} month={selectedMonth} />
       <p className="text-xs text-zinc-500">{bankCoverage.from && bankCoverage.to ? `Uploaded bank statements: ${bankCoverage.from} to ${bankCoverage.to}.` : "No SGD bank statements have been uploaded."}</p>
       {error ? <p role="alert" className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">{error}</p> : null}
       {run && !error ? <>

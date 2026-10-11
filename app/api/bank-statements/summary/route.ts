@@ -1,8 +1,10 @@
 import { sql } from "@/lib/db";
+import { ensureBankAllocationTables, bankTransactionKey } from "@/lib/bank-allocations";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  await ensureBankAllocationTables();
   const uploads = await sql<
     {
       id: number;
@@ -24,10 +26,11 @@ export async function GET() {
     left join bank_transactions t on t.upload_id = u.id
     group by u.id
     order by u.uploaded_at desc nulls last, u.id desc
-    limit 1
   `;
 
-  const latest = uploads[0] ?? null;
+  const uploadId = new URL(request.url).searchParams.get('uploadId');
+  const latest = uploadId ? uploads.find(upload => String(upload.id) === uploadId) ?? null : uploads[0] ?? null;
+  if (uploadId && !latest) return Response.json({ error: 'Statement not found. Refresh the list.' }, { status: 404 });
 
   const transactions = latest
     ? await sql<
@@ -39,14 +42,27 @@ export async function GET() {
           debit: string | null;
           credit: string | null;
           running_balance: string | null;
+          id: string;
+          allocated_cents: number;
+          remaining_cents: number;
+          allocations: { appointmentId: string; cents: number; method: string }[];
         }[]
       >`
-      select transaction_date::text, value_date::text, description_1, description_2, debit::text, credit::text, running_balance::text
-      from bank_transactions
-      where upload_id = ${latest.id}
-      order by transaction_date asc, id asc
+      select t.id::text, t.transaction_date::text, t.value_date::text, t.description_1, t.description_2,
+        t.debit::text, t.credit::text, t.running_balance::text,
+        coalesce(saved.cents, 0)::float8 as allocated_cents,
+        greatest(0, round(coalesce(t.credit, 0) * 100) - coalesce(saved.cents, 0))::float8 as remaining_cents,
+        coalesce(saved.allocations, '[]'::jsonb) as allocations
+      from bank_transactions t join bank_statement_uploads u on u.id = t.upload_id
+      left join lateral (select sum(a.allocated_cents) as cents,
+        jsonb_agg(jsonb_build_object('appointmentId', a.appointment_id, 'cents', a.allocated_cents,
+          'method', a.confirmation_method) order by a.appointment_id) as allocations
+        from bank_payment_allocations a where a.transaction_key = ${bankTransactionKey} and a.released_at is null) saved on true
+      where t.upload_id = ${latest.id}
+      order by t.transaction_date asc, t.id asc
     `
     : [];
 
-  return Response.json({ latest, transactions });
+  return Response.json({ latest, transactions, uploads: uploads.map(upload => ({ id: upload.id,
+    from: upload.statement_start_date, to: upload.statement_end_date })) });
 }
