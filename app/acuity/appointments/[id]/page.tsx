@@ -92,12 +92,31 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
   const clientFields: [string, string | null][] = [
     ["Client name", client], ["Email", record.client_email], ["Telephone", record.client_phone],
   ];
+  let pricingSource: Record<string, unknown> = record.raw_json ?? {};
+  let livePricing = false;
+  const acuityUser = process.env.ACUITY_USER_ID;
+  const acuityKey = process.env.ACUITY_API_KEY;
+  if (acuityUser && acuityKey) {
+    try {
+      const response = await fetch(`https://acuityscheduling.com/api/v1/appointments/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Basic ${Buffer.from(`${acuityUser}:${acuityKey}`).toString("base64")}` },
+        cache: "no-store", signal: AbortSignal.timeout(15000),
+      });
+      if (response.ok) {
+        const source: unknown = await response.json();
+        if (source && typeof source === "object" && !Array.isArray(source)) {
+          pricingSource = source as Record<string, unknown>;
+          livePricing = true;
+        }
+      }
+    } catch { /* Keep the saved pricing evidence if Acuity is unavailable. */ }
+  }
   const sourceLabels: Record<string, string> = {
     price: "Original price", priceSold: "Price booked", amountPaid: "Amount paid",
     paid: "Marked paid in Acuity", addons: "Extras", addOns: "Extras",
     certificate: "Package / Certificate", certificateCode: "Package / Certificate",
   };
-  const priceDetails: [string, string | null][] = Object.entries(record.raw_json ?? {})
+  const priceDetails: [string, string | null][] = Object.entries(pricingSource)
     .filter(([key]) => /price|amount|cost|total|addon|discount|certificate|^paid$/i.test(key))
     .map(([key, value]) => [sourceLabels[key] ?? key.replace(/([a-z])([A-Z])/g, "$1 $2"),
       value === null || value === undefined ? null : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)]);
@@ -128,6 +147,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
           {record.canceled ? <p className="text-sm text-amber-300">This booking is cancelled.</p> : null}
           {priceDetails.length ? <details className="border-t border-zinc-800 pt-4">
             <summary className="cursor-pointer text-sm text-zinc-300">Pricing details from Acuity</summary>
+            <p className="mt-3 text-xs text-zinc-400">{livePricing ? "Checked directly with Acuity." : "From the last Acuity sync."}</p>
             <div className="mt-4"><Fields items={priceDetails} /></div>
           </details> : null}
         </div>
