@@ -12,6 +12,7 @@ const navItems = [
   { href: "/acuity-sync", label: "Sync Acuity Data" },
   { href: "/bank-statements", label: "Upload Bank Statements" },
   { href: "/reconciliation", label: "Reconciliation" },
+  { href: "/reconciliation/unsettled", label: "↳ Unsettled" },
 ];
 
 function NavLinks({ onClick }: { onClick?: () => void }) {
