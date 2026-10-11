@@ -29,6 +29,11 @@ export async function ensureBankAllocationTables() {
       unique (transaction_key, appointment_id)
     )`;
     await tx`create index if not exists bank_payment_allocations_booking on bank_payment_allocations (appointment_id) where released_at is null`;
+    await tx`create table if not exists bank_paynow_matches (
+      year integer not null, month integer not null,
+      transaction_key text not null, appointment_id text not null,
+      primary key (year, month, transaction_key, appointment_id)
+    )`;
     await tx`create table if not exists bank_reconciliation_history (
       year integer not null, month integer not null check (month between 1 and 12),
       status text not null check (status in ('running', 'complete', 'partial', 'failed')),
@@ -41,6 +46,23 @@ export async function ensureBankAllocationTables() {
     )`;
   }).then(() => {}).catch(error => { setup = undefined; throw error; });
   await setup;
+}
+
+// Matched payments are accounted for as a whole, including shared candidates.
+// Keep this separate from amount allocations: matching must not allocate the
+// same credit repeatedly when it appears against more than one booking.
+export async function savePayNowMatches(year: number, month: number, matches: {
+  transactionKey: string; appointmentId: string;
+}[]) {
+  await ensureBankAllocationTables();
+  await sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(${year * 12 + month})`;
+    await tx`delete from bank_paynow_matches where year = ${year} and month = ${month}`;
+    for (const match of matches) await tx`insert into bank_paynow_matches
+      (year, month, transaction_key, appointment_id)
+      values (${year}, ${month}, ${match.transactionKey}, ${match.appointmentId})
+      on conflict do nothing`;
+  });
 }
 
 export type SavedBankAllocation = {

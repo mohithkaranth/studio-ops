@@ -43,7 +43,7 @@ function Fields({ items }: { items: [string, string | null][] }) {
 function StatusBadge({ status }: { status: string }) {
   const tone = status === "Settled full" ? "border-emerald-900/80 bg-emerald-950/50 text-emerald-300"
     : status === "Package booking" ? "border-sky-900/80 bg-sky-950/50 text-sky-300"
-    : status === "Settled partial" || status === "Review PayNow" ? "border-amber-900/80 bg-amber-950/50 text-amber-300"
+    : status === "Settled partial" || status === "PayNow matched" ? "border-amber-900/80 bg-amber-950/50 text-amber-300"
     : status === "No settlement" ? "border-red-900/80 bg-red-950/50 text-red-300"
     : "border-zinc-700 bg-zinc-800/50 text-zinc-300";
   return <span className={`inline-block rounded-full border px-2 py-1 text-xs font-medium ${tone}`}>{status}</span>;
@@ -84,7 +84,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
   const totalPaid = row && row.stripeCents !== null ? row.stripeCents + (confirmedBank ?? 0) : null;
   const difference = costCents !== null && totalPaid !== null ? costCents - totalPaid : null;
   const cardTitle = status === "Package booking" ? "Package / Certificate"
-    : status === "Review PayNow" ? "PayNow candidates — unconfirmed"
+    : status === "PayNow matched" ? "PayNow matched"
     : status === "No settlement" ? "Payment search"
     : status === "Unable to check" ? "Payment check"
     : confirmedBank !== null ? "PayNow payment" : "Stripe payment";
@@ -157,8 +157,8 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
             </div>)}
           </div> : null}
 
-          {row && (status === "Review PayNow" || confirmedBank !== null) ? <div className="space-y-4">
-            {status === "Review PayNow" ? <p className="text-sm text-amber-300">These transfers are possible matches. They have not been counted as settled payments.</p> : null}
+          {row && (status === "PayNow matched" || confirmedBank !== null) ? <div className="space-y-4">
+            {status === "PayNow matched" ? <p className="text-sm text-amber-300">These transfers are treated as accounted for and excluded from the unaccounted PayNow total.</p> : null}
             {row.bankMatch.candidates.filter(candidate => confirmedBank === null || candidate.reason === "Booking reference" || candidate.reason === "Saved confirmation").map(candidate => {
               const candidateDifference = costCents === null ? null : costCents - candidate.cents;
               return <div key={candidate.transactionId} className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950/50 p-4">
@@ -170,7 +170,7 @@ export default async function AcuityAppointmentDetail({ params }: { params: Prom
                   ...(candidate.allocatedCents !== undefined ? [["Allocated to this booking", amount(candidate.allocatedCents)] as [string, string]] : []),
                   ["Match evidence", candidate.reason],
                   ["Date relation", candidate.dateBasis],
-                  ...(status === "Review PayNow" ? [["Amount difference", amount(candidateDifference)] as [string, string]] : []),
+                  ...(status === "PayNow matched" ? [["Amount difference", amount(candidateDifference)] as [string, string]] : []),
                 ]} />
                 <div><p className="text-xs uppercase tracking-wide text-zinc-500">Description</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-zinc-100">{candidate.description2 || "—"}</p></div>
                 {candidate.shared ? <p className="text-sm text-amber-300">This transfer is also a candidate for another booking. It cannot be assigned automatically.</p> : null}

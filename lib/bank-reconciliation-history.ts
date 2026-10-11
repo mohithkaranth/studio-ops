@@ -11,7 +11,7 @@ export type HistoryMonth = {
 };
 
 async function sourceFingerprint() {
-  const rows = await sql<{ fingerprint: string }[]>`select md5(
+  const rows = await sql<{ fingerprint: string }[]>`select md5('paynow-matched-v2:' ||
     coalesce((select string_agg(id::text || ':' || file_hash, ',' order by id) from bank_statement_uploads), '') || ':' ||
     coalesce((select string_agg(md5(concat_ws('|', acuity_appointment_id::text, price::text,
       appointment_datetime::text, created_datetime::text, certificate_code, canceled::text, raw_json::text)), ','
@@ -41,7 +41,8 @@ export async function getBankHistory(year: number, month: number) {
         confirmedCredits: 0, confirmedCents: 0, message: saved ? "Source data changed; recheck this month." : null });
   }
   const allocations = await readBankAllocations();
-  return { months, complete: months.every(item => item.status === "complete"),
+  const matched = await sql<{ count: number }[]>`select count(distinct transaction_key)::int as count from bank_paynow_matches`;
+  return { matchedCredits: matched[0].count, months, complete: months.every(item => item.status === "complete"),
     allocatedCents: allocations.reduce((sum, item) => sum + item.cents, 0),
     allocatedCredits: new Set(allocations.map(item => item.transactionKey)).size };
 }
@@ -60,7 +61,7 @@ export async function backfillBankMonth(year: number, month: number) {
   if (!started.length) throw new Error("This month's history check is already running. Try again shortly.");
   try {
     const rows = await reconcileStripeBookings(year, month);
-    const issues = rows.filter(row => row.status === "Unable to check").length;
+    const issues = rows.filter(row => row.status === "Unable to check" && !row.note?.includes("Stripe payment is linked to multiple bookings")).length;
     const changed = await sourceFingerprint() !== fingerprint;
     const allocations = (await readBankAllocations()).filter(item => rows.some(row => row.appointmentId === item.appointmentId));
     const confirmedCredits = new Set(allocations.map(item => item.transactionKey)).size;
@@ -68,7 +69,7 @@ export async function backfillBankMonth(year: number, month: number) {
     const status = issues || changed ? "partial" : "complete";
     const review = rows.filter(row => row.bankMatch.bankStatus === "Review").length;
     const message = changed ? "Source data changed during the check. Run this month again."
-      : `${confirmedCredits} saved credits; ${review} bookings still need PayNow review${issues ? `; ${issues} payment checks failed` : ''}.`;
+      : `${confirmedCredits} saved credits; ${review} PayNow matched bookings (accounted for)${issues ? `; ${issues} payment checks failed` : ''}.`;
     await sql`update bank_reconciliation_history set status = ${status}, bookings = ${rows.length},
       issues = ${issues}, confirmed_credits = ${confirmedCredits}, confirmed_cents = ${confirmedCents},
       finished_at = now(), message = ${message} where year = ${year} and month = ${month}`;
