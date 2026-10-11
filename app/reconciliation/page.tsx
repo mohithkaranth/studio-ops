@@ -41,7 +41,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
       <div className="mx-auto w-full max-w-7xl space-y-8 px-6 py-10 sm:px-8 lg:px-10">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Reconciliation</h1>
-        <p className="text-sm text-zinc-400">Compare Acuity bookings with Stripe payments, then review PayNow candidates for bookings without a Stripe payment. Available periods start from January 2026.</p>
+        <p className="text-sm text-zinc-400">Compare Acuity bookings with Stripe payments, then match PayNow payments for bookings without a Stripe payment. Available periods start from January 2026.</p>
         <p className="text-sm text-zinc-300">Stripe connection: <span className={connected ? "font-semibold text-emerald-400" : "font-semibold text-red-400"}>{connected ? "Yes" : "No"}</span></p>
       </header>
       {fallback ? <ReconciliationFilters key={`${selectedYear}-${selectedMonth}`} periods={periods} initialYear={selectedYear} initialMonth={selectedMonth} /> : <p className="text-sm text-zinc-400">No Acuity bookings are available from January 2026 onward.</p>}
@@ -62,7 +62,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
             </div>;
           })}
         </section>
-        <p className="text-sm text-zinc-400">{rows.length} bookings in {selectedLabel}, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside the selected month. PayNow candidates are checked only for bookings with no matched Stripe payment. The bank search covers the booking date through 7 days after the session. If the booking date is missing, it uses 7 days around the session. Payer names and names in booking emails help find candidates. Different amounts are considered only within 7 days of booking or session; all name-based candidates require review. Only an unambiguous booking reference counts as confirmed PayNow payment. Click a booking row to view its complete Acuity record.</p>
+        <p className="text-sm text-zinc-400">{rows.length} bookings in {selectedLabel}, based on session date in Singapore. Stripe amounts are captured payments less refunds, before fees. Payment dates may fall outside the selected month. PayNow candidates are checked only for bookings with no matched Stripe payment. The bank search covers the booking date through 7 days after the session. If the booking date is missing, it uses 7 days around the session. Payer names and names in booking emails help find candidates. Different amounts are considered only within 7 days of booking or session; matched PayNow credits are treated as accounted for and excluded from No settlement totals. Click a booking row to view its complete Acuity record.</p>
         <ReconciliationTable rows={rows} emptyMessage={`No bookings found for ${selectedLabel}.`} />
       </> : !run ? <p className="text-sm text-zinc-400">Choose a month and year, then select Reconcile to check bookings against Stripe and your uploaded PayNow bank statements.</p> : null}
       <Link href="/" className="inline-block text-sm text-zinc-400 hover:text-zinc-100">← Back to Dashboard</Link>

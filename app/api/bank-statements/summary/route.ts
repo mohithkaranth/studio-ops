@@ -44,6 +44,7 @@ export async function GET(request: Request) {
           running_balance: string | null;
           id: string;
           allocated_cents: number;
+          paynow_matched: boolean;
           remaining_cents: number;
           allocations: { appointmentId: string; cents: number; method: string }[];
         }[]
@@ -51,6 +52,7 @@ export async function GET(request: Request) {
       select t.id::text, t.transaction_date::text, t.value_date::text, t.description_1, t.description_2,
         t.debit::text, t.credit::text, t.running_balance::text,
         coalesce(saved.cents, 0)::float8 as allocated_cents,
+        exists (select 1 from bank_paynow_matches m where m.transaction_key = ${bankTransactionKey}) as paynow_matched,
         greatest(0, round(coalesce(t.credit, 0) * 100) - coalesce(saved.cents, 0))::float8 as remaining_cents,
         coalesce(saved.allocations, '[]'::jsonb) as allocations
       from bank_transactions t join bank_statement_uploads u on u.id = t.upload_id

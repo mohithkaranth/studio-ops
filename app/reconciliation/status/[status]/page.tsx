@@ -83,7 +83,7 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
           </> : null}
         </section>
         {status === "no-settlement" ? <div className="space-y-2 text-sm text-zinc-400">
-          <p>PayNow total includes the unallocated balance of uploaded SGD credits between the booking and session dates, inclusive, for the bookings below. Payer names and individual payment amounts do not restrict this total. Saved allocations from every month are deducted; possible matches are not confirmed payments. This comparison does not settle individual bookings.</p>
+          <p>PayNow total includes the unallocated balance of uploaded SGD credits between the booking and session dates, inclusive, for the bookings below. Payer names and individual payment amounts do not restrict this total. PayNow matched credits from every month are excluded, and saved allocations are deducted. This comparison does not settle individual bookings.</p>
           {uncheckedMonths ? <p role="alert" className="text-amber-300">Provisional total: {uncheckedMonths} month(s) of payment history still need checking. <Link className="underline" href={`/reconciliation?month=${month}&year=${year}`}>Check / resume PayNow history</Link>.</p> : null}
           {totals?.missingWindows ? <p role="alert" className="text-amber-300">{totals.missingWindows} booking(s) have missing or invalid booking dates. Their payment windows cannot be included in the PayNow total.</p> : null}
           {totalsError ? <p role="alert" className="text-amber-300">{totalsError}</p> : null}

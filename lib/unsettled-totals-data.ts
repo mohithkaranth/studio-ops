@@ -22,6 +22,7 @@ export async function getUnsettledTotals(rows: ReconciliationRow[]) {
     JOIN bank_statement_uploads u ON u.id = t.upload_id
     WHERE t.credit > 0 AND COALESCE(t.debit, 0) = 0 AND UPPER(u.currency) = 'SGD'
       AND (t.description_1 ILIKE '%paynow%' OR t.description_2 ILIKE '%paynow%')
+      AND NOT EXISTS (select 1 from bank_paynow_matches m where m.transaction_key = ${bankTransactionKey})
       AND t.transaction_date >= ${from}::date AND t.transaction_date < (${to}::date + 1)
     ORDER BY ${bankTransactionKey}, t.id
   `;

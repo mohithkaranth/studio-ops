@@ -17,6 +17,7 @@ type Summary = {
 type Tx = {
   id: string;
   allocated_cents: number;
+  paynow_matched: boolean;
   remaining_cents: number;
   allocations: StatementAllocation[];
   transaction_date: string;
@@ -159,7 +160,7 @@ export default function BankStatementsPage() {
                     <td className="px-4 py-3 text-right">{tx.credit ?? ""}</td>
                     <td className="px-4 py-3 text-right">{tx.running_balance ?? ""}</td>
                     <td className="px-4 py-3">{Number(tx.credit) > 0 && /paynow/i.test([tx.description_1, tx.description_2].join(' ')) ? <>
-                      <span className={tx.allocated_cents > 0 ? 'text-emerald-300' : 'text-zinc-400'}>{tx.allocated_cents > 0 ? tx.remaining_cents === 0 ? 'Reconciled' : 'Partly reconciled' : 'Unreconciled'}</span>
+                      <span className={tx.paynow_matched || tx.allocated_cents > 0 ? 'text-emerald-300' : 'text-zinc-400'}>{tx.paynow_matched ? 'PayNow matched' : tx.allocated_cents > 0 ? tx.remaining_cents === 0 ? 'Reconciled' : 'Partly reconciled' : 'Unreconciled'}</span>
                       <BankAllocationEditor transactionId={tx.id} allocations={tx.allocations} remainingCents={tx.remaining_cents} onChange={loadData} />
                     </> : '—'}</td>
                   </tr>

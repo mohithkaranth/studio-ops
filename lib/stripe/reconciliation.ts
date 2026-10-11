@@ -3,7 +3,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { matchPayNow, type PayNowTransaction, type BankMatch } from "@/lib/bank-reconciliation";
 import { monthRange, settlementStatus, sgdCents, type SettlementStatus } from "./reconciliation-model";
-import { readBankAllocations, saveBankAllocation, bankTransactionKey } from "@/lib/bank-allocations";
+import { readBankAllocations, saveBankAllocation, savePayNowMatches, bankTransactionKey } from "@/lib/bank-allocations";
 
 type Appointment = {
   acuity_appointment_id: string;
@@ -249,6 +249,11 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         row.bankMatch.confirmedCents = null;
         row.bankMatch.bankStatus = row.bankMatch.candidates.length ? "Review" : "No match";
       }
+      const transactionKeys = new Map(transactions.map(item => [item.id, item.transaction_key!]));
+      await savePayNowMatches(year, month, rows.flatMap(row =>
+        row.bankMatch.bankStatus === "Review" ? row.bankMatch.candidates.map(candidate => ({
+          transactionKey: transactionKeys.get(candidate.transactionId)!, appointmentId: row.appointmentId,
+        })) : []));
     } catch {
       for (const row of rows) if (row.status === "No settlement" && (row.costCents ?? 0) > 0) {
         row.status = "Unable to check";
