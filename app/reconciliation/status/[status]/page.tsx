@@ -5,6 +5,9 @@ import { getReconciliationPeriods } from "@/lib/reconciliation-period-data";
 import { availablePeriod, defaultPeriod, periodLabel } from "@/lib/reconciliation-period";
 import { reconciliationStatuses, displayReconciliationStatus } from "@/lib/reconciliation-status";
 import { reconcileStripeBookings, type ReconciliationRow } from "@/lib/stripe/reconciliation";
+import { getUnsettledTotals } from "@/lib/unsettled-totals-data";
+
+const money = new Intl.NumberFormat("en-SG", { style: "currency", currency: "SGD" });
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,12 +30,18 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
   const validPeriod = availablePeriod(periods, year, month);
   const label = validPeriod ? periodLabel(year, month) : "Selected period";
   let rows: ReconciliationRow[] = [];
+  let totals: Awaited<ReturnType<typeof getUnsettledTotals>> | null = null;
+  let totalsError: string | null = null;
   let error: string | null = null;
   if (!validPeriod) error = "Choose an available booking period from January 2026 onward.";
   else {
     try {
       const allRows = await reconcileStripeBookings(year, month);
       rows = allRows.filter(row => displayReconciliationStatus(row) === selected.label);
+      if (status === "no-settlement") {
+        try { totals = await getUnsettledTotals(rows, allRows); }
+        catch { totalsError = "Unaccounted PayNow credits could not be loaded. Refresh to try again."; }
+      }
     } catch (issue) {
       error = issue instanceof Error ? issue.message : "Reconciliation could not be completed. Try again.";
     }
@@ -51,7 +60,24 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
             <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Bookings</p>
             <p className="mt-2 text-2xl font-semibold text-zinc-50">{rows.length.toLocaleString("en-SG")}</p>
           </div>
+          {status === "no-settlement" ? <>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Total Acuity cost</p>
+              <p className="mt-2 text-2xl font-semibold text-zinc-50">{rows.some(row => row.costCents === null) ? "Unavailable" : money.format(rows.reduce((total, row) => total + (row.costCents ?? 0), 0) / 100)}</p>
+              <p className="mt-2 text-xs text-zinc-400">Sum of Acuity costs in the bookings below.</p>
+            </div>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Unaccounted PayNow credits</p>
+              <p className="mt-2 text-2xl font-semibold text-zinc-50">{totals ? money.format(totals.payNowCents / 100) : "Unavailable"}</p>
+              {totals ? <p className="mt-2 text-xs text-zinc-400">{totals.creditCount.toLocaleString("en-SG")} separate credits · each counted once</p> : null}
+            </div>
+          </> : null}
         </section>
+        {status === "no-settlement" ? <div className="space-y-2 text-sm text-zinc-400">
+          <p>PayNow total includes uploaded SGD credits between the booking and session dates, inclusive, for the bookings below. Payer names and individual payment amounts do not restrict this total. Credits already confirmed or linked to booking references in any period are excluded. This comparison does not settle individual bookings.</p>
+          {totals?.missingWindows ? <p role="alert" className="text-amber-300">{totals.missingWindows} booking(s) have missing or invalid booking dates. Their payment windows cannot be included in the PayNow total.</p> : null}
+          {totalsError ? <p role="alert" className="text-amber-300">{totalsError}</p> : null}
+        </div> : null}
         <ReconciliationTable rows={rows} title={selected.label + " bookings"} emptyMessage={`No bookings in this status for ${label}.`} />
       </>}
     </div>
