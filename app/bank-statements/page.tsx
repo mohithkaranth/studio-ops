@@ -53,12 +53,16 @@ export default function BankStatementsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/bank-statements/summary', { cache: 'no-store', signal: controller.signal })
+    const uploadId = new URLSearchParams(window.location.search).get('uploadId');
+    fetch(`/api/bank-statements/summary${uploadId ? `?uploadId=${encodeURIComponent(uploadId)}` : ''}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error ?? 'Unable to load bank statements.');
         return data;
-      }).then(applyData).catch(error => { if (!controller.signal.aborted) setMessage(error.message); });
+      }).then(data => {
+        applyData(data);
+        if (window.location.hash) requestAnimationFrame(() => document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ block: 'center' }));
+      }).catch(error => { if (!controller.signal.aborted) setMessage(error.message); });
     return () => controller.abort();
   }, [applyData]);
 
@@ -152,7 +156,7 @@ export default function BankStatementsPage() {
                 </tr>
               ) : (
                 transactions.map((tx, index) => (
-                  <tr key={`${tx.transaction_date}-${index}`}>
+                  <tr id={`payment-${tx.id}`} className="target:bg-amber-950/50" key={`${tx.transaction_date}-${index}`}>
                     <td className="px-4 py-3">{tx.transaction_date}</td>
                     <td className="px-4 py-3">{tx.value_date ?? ""}</td>
                     <td className="px-4 py-3">{[tx.description_1, tx.description_2].filter(Boolean).join(" ")}</td>

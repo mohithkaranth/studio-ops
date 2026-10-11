@@ -54,7 +54,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
             const count = rows.filter(row => displayReconciliationStatus(row) === label).length;
             return <div key={slug} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{label}</p>
-              <Link href={`/reconciliation/status/${slug}?month=${selectedMonth}&year=${selectedYear}`} prefetch={false}
+              <Link href={slug === 'no-settlement' ? `/reconciliation/unsettled?year=${selectedYear}` : `/reconciliation/status/${slug}?month=${selectedMonth}&year=${selectedYear}`} prefetch={false}
                 aria-label={`View ${count} ${label.toLowerCase()} bookings`}
                 className="mt-2 inline-block rounded text-2xl font-semibold text-zinc-50 underline decoration-zinc-600 underline-offset-4 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-zinc-300">
                 {count.toLocaleString("en-SG")}
