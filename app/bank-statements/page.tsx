@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import BankAllocationEditor, { type StatementAllocation } from './BankAllocationEditor';
+import { ignoredBankCredit } from '@/lib/bank-credit-exclusions';
 
 type Summary = {
   statement_start_date: string;
@@ -163,7 +164,7 @@ export default function BankStatementsPage() {
                     <td className="px-4 py-3 text-right">{tx.debit ?? ""}</td>
                     <td className="px-4 py-3 text-right">{tx.credit ?? ""}</td>
                     <td className="px-4 py-3 text-right">{tx.running_balance ?? ""}</td>
-                    <td className="px-4 py-3">{Number(tx.credit) > 0 && /paynow/i.test([tx.description_1, tx.description_2].join(' ')) ? <>
+                    <td className="px-4 py-3">{Number(tx.credit) > 0 && ignoredBankCredit(tx.description_1, tx.description_2) ? <span className="text-zinc-400">Ignored</span> : Number(tx.credit) > 0 && /paynow/i.test([tx.description_1, tx.description_2].join(' ')) ? <>
                       <span className={tx.paynow_matched || tx.allocated_cents > 0 ? 'text-emerald-300' : 'text-zinc-400'}>{tx.paynow_matched ? 'PayNow matched' : tx.allocated_cents > 0 ? tx.remaining_cents === 0 ? 'Reconciled' : 'Partly reconciled' : 'Unreconciled'}</span>
                       <BankAllocationEditor transactionId={tx.id} allocations={tx.allocations} remainingCents={tx.remaining_cents} onChange={loadData} />
                     </> : '—'}</td>
