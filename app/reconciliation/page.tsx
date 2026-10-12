@@ -5,7 +5,8 @@ import { getReconciliationPeriods, getBankStatementCoverage } from "@/lib/reconc
 import { availablePeriod, defaultPeriod, periodLabel } from "@/lib/reconciliation-period";
 import { reconciliationStatuses, displayReconciliationStatus } from "@/lib/reconciliation-status";
 import { checkStripeConnection } from "@/lib/stripe/connection";
-import { reconcileStripeBookings, type ReconciliationRow } from "@/lib/stripe/reconciliation";
+import type { ReconciliationRow } from "@/lib/stripe/reconciliation";
+import { loadReconciliationMonth } from '@/lib/reconciliation-cache';
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,7 +32,7 @@ export default async function ReconciliationPage({ searchParams }: { searchParam
   if (run && !validPeriod) error = "Choose an available booking period from January 2026 onward.";
   else if (run && !connected) error = "Stripe connection failed. Check the connection and try again.";
   else if (run) {
-    try { rows = await reconcileStripeBookings(year, month); }
+    try { rows = (await loadReconciliationMonth(year, month, true)).rows; }
     catch (issue) { error = issue instanceof Error ? issue.message : "Reconciliation could not be completed. Try again."; }
   }
 
