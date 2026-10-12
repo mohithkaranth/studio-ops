@@ -1,25 +1,39 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import ReconciliationTable from '../ReconciliationTable';
 import type { ReconciliationRow } from '@/lib/stripe/reconciliation';
-import { displayReconciliationStatus } from '@/lib/reconciliation-status';
+import type { getSavedUnsettledYear } from '@/lib/reconciliation-cache';
 import type { getUnsettledTotals } from '@/lib/unsettled-totals-data';
 
 const money = (cents: number) => new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(cents / 100);
 type Totals = Awaited<ReturnType<typeof getUnsettledTotals>>;
 
-export default function YearlyUnsettled({ years, periods, currentYear, currentMonth, initialYear }: {
-  years: number[]; periods: { year: number; month: number }[]; currentYear: number; currentMonth: number; initialYear: number;
+export default function YearlyUnsettled({ years, initialYear }: {
+  years: number[]; initialYear: number;
 }) {
   const [year, setYear] = useState(initialYear);
   const [rows, setRows] = useState<ReconciliationRow[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState('');
+  const [progress, setProgress] = useState('Loading saved results…');
   const [error, setError] = useState('');
   const [unchecked, setUnchecked] = useState(0);
+  const [stale, setStale] = useState(false);
+
+  function applySaved(result: Awaited<ReturnType<typeof getSavedUnsettledYear>>) {
+    setRows(result.rows); setTotals(result.totals); setUnchecked(result.unchecked); setStale(result.stale);
+    setProgress(result.checkedAt ? `Saved results · checked ${new Intl.DateTimeFormat('en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }).format(new Date(result.checkedAt))}` : 'No saved check yet. Completed months will be saved as you go.');
+  }
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/reconciliation/unsettled?year=${year}`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; })
+      .then(result => { if (!controller.signal.aborted) applySaved(result); })
+      .catch(issue => { if (!controller.signal.aborted) { setError(issue.message); setProgress(''); } });
+    return () => controller.abort();
+  }, [year]);
 
   async function request(body: object) {
     const response = await fetch('/api/reconciliation/unsettled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -28,22 +42,16 @@ export default function YearlyUnsettled({ years, periods, currentYear, currentMo
     return result;
   }
 
-  async function check() {
-    setBusy(true); setTotals(null); setRows([]); setError(''); setUnchecked(0);
-    const allRows: ReconciliationRow[] = [];
-    const months = periods.filter(period => period.year === year && (year < currentYear || period.month <= currentMonth)).map(period => period.month).sort((a, b) => a - b);
+  async function check(force = false) {
+    setBusy(true); setError('');
     try {
+      const saved: Awaited<ReturnType<typeof getSavedUnsettledYear>> = await request({ year });
+      const months = force ? saved.months : saved.missingMonths;
       for (const [index, month] of months.entries()) {
         setProgress(`Checking ${new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(year, month - 1, 1)))} · ${index + 1} of ${months.length} months`);
-        const result = await request({ year, month });
-        allRows.push(...result.rows);
+        await request({ year, month, force });
       }
-      const unsettled = allRows.filter(row => displayReconciliationStatus(row) === 'No settlement');
-      setProgress('Comparing yearly totals and excluding accounted payments…');
-      const result = await request({ year, checkedMonths: months, appointmentIds: unsettled.map(row => row.appointmentId) });
-      setRows(unsettled); setTotals(result);
-      setUnchecked(allRows.filter(row => displayReconciliationStatus(row) === 'Unable to check').length);
-      setProgress(`${year === currentYear ? 'Year to date' : 'Full year'} checked · ${months.length} months`);
+      applySaved(await request({ year }));
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : 'Unable to finish checking.'); setProgress('');
     } finally { setBusy(false); }
@@ -55,11 +63,13 @@ export default function YearlyUnsettled({ years, periods, currentYear, currentMo
       <select id="unsettled-year" disabled={busy} value={year} onChange={event => { setYear(Number(event.target.value)); setTotals(null); setRows([]); setProgress(''); setError(''); }} className="rounded border border-zinc-700 bg-zinc-900 p-2">
         {years.map(value => <option key={value}>{value}</option>)}
       </select>
-      <button disabled={busy || !years.length} onClick={check} className="rounded bg-zinc-100 px-4 py-2 text-zinc-950 disabled:opacity-50">{busy ? 'Checking…' : 'Check yearly unsettled'}</button>
+      <button disabled={busy || !years.length} onClick={() => check()} className="rounded bg-zinc-100 px-4 py-2 text-zinc-950 disabled:opacity-50">{busy ? 'Checking…' : totals ? 'Update results' : 'Check yearly unsettled'}</button>
+      {totals ? <button disabled={busy} onClick={() => check(true)} className="rounded border border-zinc-700 px-4 py-2 text-sm disabled:opacity-50">Recheck all payments</button> : null}
       <p role="status" className="text-sm text-zinc-400">{progress}</p>
     </div>
     <p className="text-sm text-zinc-400">For the current year, only sessions that have already taken place are included. Each payment must fall between a listed booking’s creation date and session date. Payments already accounted for in any month, plus IRAS and Mohith Karanth credits, are excluded. The comparison is by totals; it does not assign payments to individual bookings.</p>
     {error ? <p role="alert" className="text-red-300">{error}</p> : null}
+    {stale ? <p role="status" className="text-amber-300">Some months need updating. Saved results remain available; Update results checks only missing or changed months.</p> : null}
     {totals ? <>
       <section className="grid gap-4 sm:grid-cols-3">
         {[

@@ -19,6 +19,25 @@ function addMonths(year: number, month: number, delta: number) {
 
 export function parseDateMention(question: string, now = new Date()): ParsedDateMention {
   const text = question.toLowerCase().replace(/[“”]/g, " ").replace(/\s+/g, " ").trim();
+  const local = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Singapore',year:'numeric',month:'2-digit'}).format(now).split('-');
+  const currentYear = Number(local[0]), currentMonth = Number(local[1]);
+  const isoRange = /\b(20\d{2}-\d{2}-\d{2})\s+(?:to|through|until)\s+(20\d{2}-\d{2}-\d{2})\b/.exec(text);
+  if (isoRange) {
+    const start = new Date(isoRange[1]), end = new Date(isoRange[2]);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start<=end && start.toISOString().slice(0,10)===isoRange[1] && end.toISOString().slice(0,10)===isoRange[2]) {
+      end.setUTCDate(end.getUTCDate()+1);
+      return {dateMentioned:true,parseable:true,dateRange:{startDate:isoRange[1],endDateExclusive:end.toISOString().slice(0,10),label:`${isoRange[1]} to ${isoRange[2]}`}};
+    }
+    return {dateMentioned:true,parseable:false,dateRange:null};
+  }
+  const monthsRange = new RegExp(`\\b(${MONTH_PATTERN})\\.?\\s*(20\\d{2})?\\s*(?:to|through|until|[-–])\\s*(${MONTH_PATTERN})\\.?\\s*(20\\d{2})?\\b`, 'i').exec(text);
+  if (monthsRange) {
+    const fromMonth = MONTHS[monthsRange[1]], toMonth = MONTHS[monthsRange[3]];
+    const fromYear = Number(monthsRange[2] ?? monthsRange[4] ?? currentYear);
+    const toYear = Number(monthsRange[4] ?? fromYear + (toMonth < fromMonth ? 1 : 0));
+    const next = addMonths(toYear,toMonth,1);
+    return {dateMentioned:true,parseable:true,dateRange:{startDate:ymd(fromYear,fromMonth),endDateExclusive:ymd(next.year,next.month),label:`${monthsRange[0]}`}};
+  }
   const monthYear = new RegExp(`\\b(${MONTH_PATTERN})\\.?\\s+(20\\d{2})\\b`, "i").exec(text);
   if (monthYear) {
     const month = MONTHS[monthYear[1].replace(".", "").toLowerCase()];
@@ -34,8 +53,6 @@ export function parseDateMention(question: string, now = new Date()): ParsedDate
     return { dateMentioned: true, parseable: true, dateRange: { startDate: ymd(year, 1), endDateExclusive: ymd(year + 1, 1), label: String(year) } };
   }
 
-  const currentYear = now.getUTCFullYear();
-  const currentMonth = now.getUTCMonth() + 1;
   if (/\bthis year\b/i.test(text)) {
     return { dateMentioned: true, parseable: true, dateRange: { startDate: ymd(currentYear, 1), endDateExclusive: ymd(currentYear + 1, 1), label: String(currentYear) } };
   }
@@ -54,6 +71,10 @@ export function parseDateMention(question: string, now = new Date()): ParsedDate
     const end = addMonths(currentYear, currentMonth, 1);
     return { dateMentioned: true, parseable: true, dateRange: { startDate: ymd(start.year, start.month), endDateExclusive: ymd(end.year, end.month), label: `past ${months} months` } };
   }
-  if (bareMonth) return { dateMentioned: true, parseable: false, dateRange: null };
+  if (bareMonth) {
+    const mention = new RegExp(`\\b(${MONTH_PATTERN})\\.?\\b`, 'i').exec(text)!;
+    const month = MONTHS[mention[1]], next = addMonths(currentYear,month,1);
+    return {dateMentioned:true,parseable:true,dateRange:{startDate:ymd(currentYear,month),endDateExclusive:ymd(next.year,next.month)}};
+  }
   return { dateMentioned: /\b20\d{2}\b/.test(text), parseable: false, dateRange: null };
 }

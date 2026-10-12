@@ -1,33 +1,17 @@
-import { parseDateMention } from "./date-parser";
-import { extractSemanticQuery } from "./intent-extractor";
-import { renderAnswer } from "./answer-renderer";
-import { executeSemanticQuery } from "./result-shaper";
-import { validateAndNormalizeSemanticQuery } from "./semantic-validator";
-
-type ChatRequest = { question?: unknown };
-
-export const dynamic = "force-dynamic";
-
+import { answerStudioQuestion, normalizeChatHistory } from './agent';
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+export const maxDuration = 300;
 export async function POST(request: Request) {
+  if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({error:'Open Studio Chat in Studio Ops.'},{status:403});
   try {
-    const body = (await request.json()) as ChatRequest;
-    const question = typeof body.question === "string" ? body.question.trim() : "";
-
-    if (!question) {
-      return Response.json({ type: "clarification", question: "What would you like to ask about Studio Ops data?" });
-    }
-
-    const parsedDate = parseDateMention(question);
-    const rawQuery = await extractSemanticQuery(question);
-    const validated = validateAndNormalizeSemanticQuery(rawQuery, question, parsedDate);
-
-    if (validated.type === "clarification") return Response.json(validated);
-
-    const shapedResult = await executeSemanticQuery(validated.query);
-    const answer = renderAnswer(validated.query, shapedResult);
-    return Response.json({ type: "answer", ...answer, sqlDebug: shapedResult.sqlDebug, semanticQuery: validated.query });
-  } catch (error) {
-    console.error("Studio Chat failed:", error);
-    return Response.json({ error: "Studio Chat could not answer that question." }, { status: 500 });
+    const body = await request.json();
+    const question = typeof body.question==='string' ? body.question.trim() : '';
+    if (!question || question.length > 4000) return Response.json({error:'Enter a question of up to 4,000 characters.'},{status:400});
+    const answer = await answerStudioQuestion(question,normalizeChatHistory(body.history));
+    return Response.json({type:'answer',...answer});
+  } catch(error) {
+    console.error('Studio Chat investigation failed',error);
+    return Response.json({error:'Studio Chat could not finish that check. Try again or ask a more specific question.'},{status:502});
   }
 }
