@@ -51,7 +51,12 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     await ensureBankAllocationTables();
     const { start, end } = range(args);
     if (!Array.isArray(args.searchTerms) || args.searchTerms.length > 8 || args.searchTerms.some(term=>typeof term !== 'string')) throw new Error('Use up to eight search terms.');
-    const patterns = args.searchTerms.map(term=>pattern(String(term)));
+    const searchFilter = args.searchTerms.length ? args.searchTerms.reduce((combined, term) => {
+      pattern(String(term));
+      const words = String(term).toLowerCase().match(/[a-z0-9]+/g)!;
+      const phrase = words.reduce((condition, word) => sql`${condition} and concat_ws(' ',t.description_1,t.description_2) ilike ${'%'+word+'%'}`, sql`true`);
+      return sql`${combined} or (${phrase})`;
+    }, sql`false`) : sql`true`;
     const result = await sql<{ count: number; totalCents: string; records: { id: string; upload_id: number; date: string; description: string; cents: number; allocated_cents: number; matched: boolean }[] }[]>`
       with matched as (
         select distinct on (${bankTransactionKey}) t.id::text, t.upload_id, t.transaction_date::date::text as date,
@@ -62,7 +67,7 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
         where t.credit > 0 and coalesce(t.debit,0)=0 and upper(u.currency)='SGD'
           and (${start}::date is null or t.transaction_date >= ${start}::date)
           and (${end}::date is null or t.transaction_date < ${end}::date)
-          and ${patterns.length ? sql`concat_ws(' ',t.description_1,t.description_2) ilike any(${sql.array(patterns)}::text[])` : sql`true`}
+          and (${searchFilter})
         order by ${bankTransactionKey},t.id
       ) select count(*)::int as count, coalesce(sum(cents),0)::text as "totalCents",
         coalesce((select jsonb_agg(r) from (select * from matched order by date,id limit 100) r),'[]'::jsonb) as records from matched`;
@@ -97,7 +102,8 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
   }
   if (name === 'get_reconciliation_results') {
     const year = Number(args.year);
-    if (!Number.isInteger(year) || year < 2026 || year > new Date().getUTCFullYear()) throw new Error('Choose an available reconciliation year.');
+    const currentYear = Number(new Intl.DateTimeFormat('en',{year:'numeric',timeZone:'Asia/Singapore'}).format(new Date()));
+    if (!Number.isInteger(year) || year < 2026 || year > currentYear) throw new Error('Choose an available reconciliation year.');
     const state = await getSavedUnsettledYear(year);
     const words = typeof args.client==='string' ? args.client.toLowerCase().split(/\s+/).filter(Boolean) : [];
     const snapshots = await sql<{ rows: import('@/lib/stripe/reconciliation').ReconciliationRow[] }[]>`select rows from reconciliation_month_snapshots where year=${year} and month=any(${sql.array(state.months)}::int[])`;
