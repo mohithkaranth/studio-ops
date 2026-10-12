@@ -25,7 +25,7 @@ export const studioTools = [
   }),
   tool('get_booking_details', 'Check one booking’s current Acuity price, priceSold, amountPaid, paid flag, certificate and add-ons directly from Acuity. Use to verify saved prices. Invoice extras are not included unless returned by Acuity.', { appointmentId: { type: 'string' } }),
   tool('get_reconciliation_results', 'Read saved yearly reconciliation including unsettled bookings, their PayNow candidates and yearly unaccounted totals. Never starts payment checks. Reports missing/stale months. Client filter narrows bookings but yearly PayNow total always remains a whole-year pooled comparison, not assigned to that client.', {
-    year: { type: 'integer', minimum: 2026 }, client: nullableString,
+    year: { type: 'integer', minimum: 2026 }, client: nullableString, month: {type:['integer','null'],minimum:1,maximum:12},
   }),
   tool('query_studio_report', 'Run an existing validated Studio Ops report for revenue, debits, utilisation-related booking counts, grouped months/rooms/types and bank-versus-Acuity comparisons. Supply a fully self-contained question with the dates and context resolved from the conversation.', { question: { type: 'string' } }),
 ];
@@ -105,16 +105,31 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     const currentYear = Number(new Intl.DateTimeFormat('en',{year:'numeric',timeZone:'Asia/Singapore'}).format(new Date()));
     if (!Number.isInteger(year) || year < 2026 || year > currentYear) throw new Error('Choose an available reconciliation year.');
     const state = await getSavedUnsettledYear(year);
+    const month = args.month === null || args.month === undefined ? null : Number(args.month);
+    if (month !== null && (!Number.isInteger(month) || month < 1 || month > 12)) throw new Error('Choose a valid month.');
     const words = typeof args.client==='string' ? args.client.toLowerCase().split(/\s+/).filter(Boolean) : [];
+    const inScope = (row: import('@/lib/stripe/reconciliation').ReconciliationRow) => new Date(row.appointmentDate).getTime()<=Date.now()
+      && words.every(word=>`${row.client} ${row.email ?? ''}`.toLowerCase().includes(word))
+      && (month===null || Number(new Intl.DateTimeFormat('en',{timeZone:'Asia/Singapore',month:'numeric'}).format(new Date(row.appointmentDate)))===month);
     const snapshots = await sql<{ rows: import('@/lib/stripe/reconciliation').ReconciliationRow[] }[]>`select rows from reconciliation_month_snapshots where year=${year} and month=any(${sql.array(state.months)}::int[])`;
-    const allBookings = snapshots.flatMap(item=>item.rows).filter(row=>new Date(row.appointmentDate).getTime()<=Date.now() && words.every(word=>`${row.client} ${row.email ?? ''}`.toLowerCase().includes(word)));
-    const rows = state.rows.filter(row=>words.every(word=>`${row.client} ${row.email ?? ''}`.toLowerCase().includes(word)));
-    return { data: {year,checkedAt:state.checkedAt,stale:state.stale,missingMonths:state.missingMonths,unchecked:state.unchecked,
+    const allBookings = snapshots.flatMap(item=>item.rows).filter(inScope).sort((a,b)=>b.appointmentDate.localeCompare(a.appointmentDate));
+    const rows = state.rows.filter(inScope);
+    const ids = [...new Set(allBookings.slice(0,100).flatMap(row=>row.bankMatch.candidates.map(candidate=>candidate.transactionId)))];
+    const payments = ids.length ? await sql<{id:string;uploadId:number}[]>`select id::text,upload_id as "uploadId" from bank_transactions where id::text=any(${sql.array(ids)}::text[])` : [];
+    const paymentHref = (id:string) => {const payment=payments.find(item=>item.id===id); return payment ? `/bank-statements?uploadId=${payment.uploadId}#payment-${id}` : null;};
+    return { data: {year,month,checkedAt:state.checkedAt,stale:state.stale,missingMonths:state.missingMonths,unchecked:state.unchecked,
       yearlyTotals:state.totals ? {acuityCostCents:state.totals.acuityCostCents,payNowCents:state.totals.payNowCents,creditCount:state.totals.creditCount} : null,
       filteredUnsettledCount:rows.length,filteredAcuityCostCents:rows.some(row=>row.costCents===null) ? null : rows.reduce((sum,row)=>sum+(row.costCents??0),0),
-      bookings:allBookings.slice(0,100).map(row=>({...row,status:displayReconciliationStatus(row)})),
+      bookings:allBookings.slice(0,100).map(row=>({appointmentId:row.appointmentId,client:row.client,sessionDate:row.appointmentDate,bookedOn:row.createdDate,
+        type:row.appointmentType,acuityCostCents:row.costCents,stripePaidCents:row.stripeCents,status:displayReconciliationStatus(row),
+        confirmedPayNowCents:row.bankMatch.confirmedCents,
+        payNowPayments:row.bankMatch.candidates.map(candidate=>({date:candidate.date,cents:candidate.cents,allocatedCents:candidate.allocatedCents??null,
+          payer:candidate.payer,description:[candidate.description,candidate.description2].filter(Boolean).join(' '),matchBasis:candidate.reason,
+          accountedFor:displayReconciliationStatus(row)==='PayNow matched'||row.bankMatch.bankStatus==='Confirmed',href:paymentHref(candidate.transactionId)})),
+        href:`/acuity/appointments/${row.appointmentId}`})),
       unaccountedPayments:state.totals?.credits.slice(0,100) ?? [],warning:'The yearly unaccounted PayNow pool is not attributed to individual clients. Invoice extras are not included in Acuity costs.'},
-      sources:[{label:`${year} saved Unsettled results`,href:`/reconciliation/unsettled?year=${year}`},...allBookings.slice(0,20).map(row=>({label:`${row.client} · ${row.appointmentDate.slice(0,10)}`,href:`/acuity/appointments/${row.appointmentId}`}))] };
+      sources:[{label:`${year} saved Unsettled results`,href:`/reconciliation/unsettled?year=${year}`},...allBookings.slice(0,12).map(row=>({label:`${row.client} · ${row.appointmentDate.slice(0,10)}`,href:`/acuity/appointments/${row.appointmentId}`})),
+        ...payments.slice(0,7).map(payment=>({label:`Matched PayNow payment ${payment.id}`,href:paymentHref(payment.id)!}))] };
   }
   if (name === 'query_studio_report') {
     if (typeof args.question !== 'string' || args.question.length > 4000) throw new Error('Use a short report question.');
