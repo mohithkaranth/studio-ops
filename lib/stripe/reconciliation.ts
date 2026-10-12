@@ -1,4 +1,5 @@
 import "server-only";
+import { ignoredBankCredit } from "@/lib/bank-credit-exclusions";
 
 import { sql } from "@/lib/db";
 import { matchPayNow, type PayNowTransaction, type BankMatch } from "@/lib/bank-reconciliation";
@@ -235,7 +236,7 @@ export async function reconcileStripeBookings(year: number, month: number): Prom
         ORDER BY t.transaction_date, t.id
       `;
       const allocatedKeys = new Set(savedBefore.map(item => item.transactionKey));
-      const matches = matchPayNow(rows, transactions.filter(item => !allocatedKeys.has(item.transaction_key ?? '')));
+      const matches = matchPayNow(rows, transactions.filter(item => !ignoredBankCredit(item.description_1, item.description_2) && !allocatedKeys.has(item.transaction_key ?? '')));
       for (const row of rows) {
         row.bankMatch = matches.get(row.appointmentId)!;
         if (row.bankMatch.confirmedCents !== null) {

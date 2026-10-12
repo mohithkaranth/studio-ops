@@ -1,4 +1,5 @@
 import "server-only";
+import { ignoredBankCredit } from "@/lib/bank-credit-exclusions";
 import { sql } from "@/lib/db";
 import { sgdCents } from "@/lib/stripe/reconciliation-model";
 import { assertAllocation, type Allocation } from "@/lib/bank-allocation-model";
@@ -86,7 +87,7 @@ export async function readBankAllocations(): Promise<SavedBankAllocation[]> {
     where a.released_at is null and a.transaction_key = ${bankTransactionKey}
     order by a.transaction_key, a.appointment_id, t.id
   `;
-  return rows.map(row => ({ ...row, cents: Number(row.cents), creditCents: Number(row.creditCents) }));
+  return rows.filter(row => !ignoredBankCredit(row.description, row.description2)).map(row => ({ ...row, cents: Number(row.cents), creditCents: Number(row.creditCents) }));
 }
 
 export async function saveBankAllocation({ transactionId, appointmentId, cents, method }: {
@@ -109,6 +110,7 @@ export async function saveBankAllocation({ transactionId, appointmentId, cents, 
     `;
     const credit = credits[0];
     if (!credit) throw new Error("This SGD PayNow credit is no longer available. Refresh the statement.");
+    if (ignoredBankCredit(credit.evidence.description1, credit.evidence.description2)) throw new Error("This payment is ignored for reconciliation (IRAS or Mohith Karanth).");
     await tx`select pg_advisory_xact_lock(hashtext(${credit.key}))`;
     const booking = await tx`select acuity_appointment_id from acuity_appointments where acuity_appointment_id::text = ${appointmentId} for share`;
     if (!booking.length) throw new Error("Booking not found.");

@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { sgdCents } from "@/lib/stripe/reconciliation-model";
 import { unsettledTotals, type UnsettledBooking } from "@/lib/unsettled-totals";
 import { bankTransactionKey, ensureBankAllocationTables } from "@/lib/bank-allocations";
+import { ignoredBankCredit } from "@/lib/bank-credit-exclusions";
 
 export async function getUnsettledTotals(rows: UnsettledBooking[]) {
   await ensureBankAllocationTables();
@@ -30,6 +31,6 @@ export async function getUnsettledTotals(rows: UnsettledBooking[]) {
     const cents = sgdCents(credit.credit);
     if (cents === null) throw new Error("Invalid PayNow credit amount.");
     return { ...credit, cents };
-  }).filter(credit => credit.cents > 0 && initial.windows.some(window => credit.date >= window.from && credit.date <= window.to));
+  }).filter(credit => !ignoredBankCredit(credit.description) && credit.cents > 0 && initial.windows.some(window => credit.date >= window.from && credit.date <= window.to));
   return { ...unsettledTotals(rows, candidates, excluded), credits: candidates };
 }

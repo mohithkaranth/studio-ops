@@ -58,7 +58,7 @@ export default function YearlyUnsettled({ years, periods, currentYear, currentMo
       <button disabled={busy || !years.length} onClick={check} className="rounded bg-zinc-100 px-4 py-2 text-zinc-950 disabled:opacity-50">{busy ? 'Checking…' : 'Check yearly unsettled'}</button>
       <p role="status" className="text-sm text-zinc-400">{progress}</p>
     </div>
-    <p className="text-sm text-zinc-400">For the current year, only sessions that have already taken place are included. Each payment must fall between a listed booking’s creation date and session date. Payments already accounted for in any month are excluded. The comparison is by totals; it does not assign payments to individual bookings.</p>
+    <p className="text-sm text-zinc-400">For the current year, only sessions that have already taken place are included. Each payment must fall between a listed booking’s creation date and session date. Payments already accounted for in any month, plus IRAS and Mohith Karanth credits, are excluded. The comparison is by totals; it does not assign payments to individual bookings.</p>
     {error ? <p role="alert" className="text-red-300">{error}</p> : null}
     {totals ? <>
       <section className="grid gap-4 sm:grid-cols-3">
