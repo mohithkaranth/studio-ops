@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import BackToPrevious from "@/app/components/BackToPrevious";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
@@ -51,6 +52,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default async function AcuityAppointmentDetail({ params }: { params: Promise<{ id: string }> }) {
+  await requireStudioSession();
+
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
   const records = await sql<Appointment[]>`

@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/app/components/Sidebar";
-import AcuitySyncNotifier from "@/app/components/AcuitySyncNotifier";
+import StudioShell from "@/app/components/StudioShell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,11 +29,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-zinc-950 text-zinc-100">
-        <div className="flex min-h-full">
-          <Sidebar />
-          <AcuitySyncNotifier />
-          <main className="min-w-0 flex-1 pt-14 lg:pt-0">{children}</main>
-        </div>
+        <StudioShell>{children}</StudioShell>
       </body>
     </html>
   );

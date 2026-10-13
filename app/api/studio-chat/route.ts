@@ -1,8 +1,11 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { answerStudioQuestion, normalizeChatHistory } from './agent';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 export async function POST(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+
   if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({error:'Open Studio Chat in Studio Ops.'},{status:403});
   try {
     const body = await request.json();

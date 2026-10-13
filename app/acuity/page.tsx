@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import { sql } from "@/lib/db";
 
 const ACUITY_APPOINTMENTS_URL = "https://acuityscheduling.com/api/v1/appointments";
@@ -89,6 +90,8 @@ async function fetchAppointments(): Promise<AcuityAppointment[]> {
 }
 
 export default async function AcuityPage(props: { searchParams: Promise<SearchParams> }) {
+  await requireStudioSession();
+
   const searchParams = await props.searchParams;
   const rawReport = normalizeQueryValue(searchParams.report);
   const report: ReportKey =

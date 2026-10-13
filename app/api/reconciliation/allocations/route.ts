@@ -1,3 +1,4 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { saveBankAllocation, releaseBankAllocation } from "@/lib/bank-allocations";
 import { sgdCents } from "@/lib/stripe/reconciliation-model";
 
@@ -23,5 +24,9 @@ async function change(request: Request, release: boolean) {
   }
 }
 
-export async function POST(request: Request) { return change(request, false); }
-export async function DELETE(request: Request) { return change(request, true); }
+export async function POST(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+ return change(request, false); }
+export async function DELETE(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+ return change(request, true); }

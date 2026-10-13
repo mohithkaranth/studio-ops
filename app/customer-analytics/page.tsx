@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import { sql } from "@/lib/db";
 import CustomerAnalyticsControls, { type CustomerAnalyticsExportRow } from "./CustomerAnalyticsControls";
 
@@ -51,6 +52,8 @@ function SummaryCard({ title, value }: { title: string; value: number }) {
 }
 
 export default async function CustomerAnalyticsPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireStudioSession();
+
   const params = await searchParams;
   const maximumToMonth = singaporeMonth(-4);
   const rawFromMonth = firstValue(params.fromMonth);

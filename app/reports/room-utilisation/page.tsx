@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from "next/link";
 import RoomUtilisationFilters from "./RoomUtilisationFilters";
 import ExportAppointmentDetailsButton from "./ExportAppointmentDetailsButton";
@@ -107,6 +108,8 @@ function SummaryCard({ title, value }: { title: string; value: string }) {
 export default async function RoomUtilisationPage(props: {
   searchParams: SearchParams;
 }) {
+  await requireStudioSession();
+
   const searchParams = await props.searchParams;
   const today = singaporeToday();
   const filters = {

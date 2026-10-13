@@ -63,7 +63,7 @@ export async function createStudioChatPdf(options:PdfExport,fontBytes:Uint8Array
   function section(label:string) {if(y<105)newPage();y-=9;line(label,12,blue);y-=4;}
   function table(report:ReportTable) {
     const padding=7,size=9,leading=13.5;
-    const weights=report.columns.map(column=>column.format==='number'?Math.max(13,column.label.length*.7):column.format==='money'?15:Math.min(38,Math.max(16,column.label.length,...report.rows.map(row=>String(row[column.key]??'').split('\n').reduce((max,part)=>Math.max(max,part.length),0)))));
+    const weights=report.columns.map(column=>column.format==='number'?Math.max(13,column.label.length*.7):column.format==='money'?22:Math.min(38,Math.max(16,column.label.length,...report.rows.map(row=>String(row[column.key]??'').split('\n').reduce((max,part)=>Math.max(max,part.length),0)))));
     const total=weights.reduce((sum,weight)=>sum+weight,0);
     const widths=weights.map(weight=>bodyWidth*weight/total);
     const wrap=(value:string,index:number)=>wrapPdfText(printable(value),font,size,widths[index]-padding*2);

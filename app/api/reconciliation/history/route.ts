@@ -1,3 +1,4 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { getBankHistory, backfillBankMonth } from "@/lib/bank-reconciliation-history";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,8 @@ function period(value: unknown) {
 }
 
 export async function GET(request: Request) {
+  const denied=await authorizeApiRequest(request,false);if(denied)return denied;
+
   try {
     const query = new URL(request.url).searchParams;
     const { year, month } = period({ year: Number(query.get('year')), month: Number(query.get('month')) });
@@ -22,6 +25,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+
   if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: "Open the history check in Studio Ops." }, { status: 403 });
   try {
     const { year, month } = period(await request.json());

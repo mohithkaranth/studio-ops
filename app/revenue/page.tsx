@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from "next/link";
 import RevenueReportsCharts, {
   type RevenueReportPoint,
@@ -36,6 +37,8 @@ function SummaryCard({ title, value }: { title: string; value: string }) {
 }
 
 export default async function RevenuePage() {
+  await requireStudioSession();
+
   const rows = await sql<RevenueReportRow[]>`
     SELECT
       date_trunc('month', transaction_date)::date AS month_start,

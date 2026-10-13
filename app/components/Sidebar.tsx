@@ -28,6 +28,8 @@ function NavLinks({ onClick }: { onClick?: () => void }) {
           {item.label}
         </Link>
       ))}
+      <Link href="/account/password" onClick={onClick} className="mt-6 border-t border-zinc-800 px-3 pt-4 pb-2 text-sm text-zinc-400 hover:text-zinc-100">Change password</Link>
+      <form action="/api/auth/logout" method="post"><button className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100">Sign out</button></form>
     </nav>
   );
 }

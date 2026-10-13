@@ -1,8 +1,11 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from 'next/link'
 
 import AcuitySyncForm from '@/app/components/AcuitySyncForm'
 
-export default function AcuitySyncPage() {
+export default async function AcuitySyncPage() {
+  await requireStudioSession();
+
   return (
     <div className="mx-auto w-full max-w-4xl space-y-8 px-6 py-12 sm:px-10 lg:px-12">
       <header className="space-y-2">

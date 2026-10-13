@@ -1,3 +1,4 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { getSavedUnsettledYear, loadReconciliationMonth } from '@/lib/reconciliation-cache';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,12 +8,16 @@ function validYear(year: unknown): year is number {
   return Number.isInteger(year) && Number(year) >= 2026 && Number(year) <= current;
 }
 export async function GET(request: Request) {
+  const denied=await authorizeApiRequest(request,false);if(denied)return denied;
+
   const year = Number(new URL(request.url).searchParams.get('year'));
   if (!validYear(year)) return Response.json({ error: 'Choose an available year.' }, { status: 400 });
   try { return Response.json(await getSavedUnsettledYear(year), { headers: { 'Cache-Control': 'no-store' } }); }
   catch { return Response.json({ error: 'Saved results could not be loaded. Try again.' }, { status: 502 }); }
 }
 export async function POST(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+
   if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'Open Unsettled in Studio Ops.' }, { status: 403 });
   try {
     const body = await request.json();

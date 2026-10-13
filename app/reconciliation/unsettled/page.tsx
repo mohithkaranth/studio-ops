@@ -1,8 +1,11 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import { getReconciliationPeriods } from "@/lib/reconciliation-period-data";
 import YearlyUnsettled from "./YearlyUnsettled";
 
 export const dynamic = "force-dynamic";
 export default async function Page({ searchParams }: { searchParams: Promise<{ year?: string }> }) {
+  await requireStudioSession();
+
   const query = await searchParams;
   const periods = await getReconciliationPeriods();
   const currentYear = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Asia/Singapore' }).format(new Date()));
