@@ -20,6 +20,9 @@ export const studioTools = [
   tool('find_bank_payments', 'Search actual incoming SGD bank credits. Returns exact count and total over ALL matches, up to 100 evidence rows and their ignored/matched/allocated status. Multiple payer terms are OR; use separate calls for per-payer totals. Raw bank searches include ignored credits; use get_reconciliation_results for unsettled totals.', {
     searchTerms: { type: 'array', items: { type: 'string' }, maxItems: 8 }, startDate: nullableString, endDateExclusive: nullableString,
   }),
+  tool('find_bank_debits', 'Search actual outgoing SGD bank debits: expenses, spending, withdrawals and payments to vendors or people. Returns exact count and total over ALL matches and up to 100 evidence rows with bank links. Use an empty searchTerms array for all debits. Multiple vendor terms are OR; use separate calls for per-vendor totals. Debit amounts are positive amounts spent. Credit reconciliation exclusions do not apply to outgoing debits.', {
+    searchTerms: { type: 'array', items: { type: 'string' }, maxItems: 8 }, startDate: nullableString, endDateExclusive: nullableString,
+  }),
   tool('find_acuity_bookings', 'Find a client’s non-cancelled Acuity bookings and sum their actual Acuity prices. Date range is Singapore session dates. Returns count, total and up to 100 bookings with links, creation dates and package codes. Acuity paid flags alone are not proof of bank settlement.', {
     client: nullableString, startDate: nullableString, endDateExclusive: nullableString,
   }),
@@ -47,7 +50,10 @@ function pattern(value: string) {
 }
 
 export async function runStudioTool(name: string, args: Args): Promise<ToolResult> {
-  if (name === 'find_bank_payments') {
+  if (name === 'find_bank_payments' || name === 'find_bank_debits') {
+    const incoming = name === 'find_bank_payments';
+    const amount = incoming ? sql`t.credit` : sql`t.debit`;
+    const sourceKey = incoming ? bankTransactionKey : sql`md5(${bankTransactionKey} || ':' || round(coalesce(t.debit,0)*100)::bigint::text)`;
     await ensureBankAllocationTables();
     const { start, end } = range(args);
     if (!Array.isArray(args.searchTerms) || args.searchTerms.length > 8 || args.searchTerms.some(term=>typeof term !== 'string')) throw new Error('Use up to eight search terms.');
@@ -59,20 +65,20 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     }, sql`false`) : sql`true`;
     const result = await sql<{ count: number; totalCents: string; records: { id: string; upload_id: number; date: string; description: string; cents: number; allocated_cents: number; matched: boolean }[] }[]>`
       with matched as (
-        select distinct on (${bankTransactionKey}) t.id::text, t.upload_id, t.transaction_date::date::text as date,
-          concat_ws(' ',t.description_1,t.description_2) as description, round(t.credit*100)::float8 as cents,
+        select distinct on (${sourceKey}) t.id::text, t.upload_id, t.transaction_date::date::text as date,
+          concat_ws(' ',t.description_1,t.description_2) as description, round(${amount}*100)::float8 as cents,
           coalesce((select sum(a.allocated_cents) from bank_payment_allocations a where a.transaction_key=${bankTransactionKey} and a.released_at is null),0)::float8 as allocated_cents,
           exists(select 1 from bank_paynow_matches m where m.transaction_key=${bankTransactionKey}) as matched
         from bank_transactions t join bank_statement_uploads u on u.id=t.upload_id
-        where t.credit > 0 and coalesce(t.debit,0)=0 and upper(u.currency)='SGD'
+        where ${incoming ? sql`t.credit > 0 and coalesce(t.debit,0)=0` : sql`t.debit > 0 and coalesce(t.credit,0)=0`} and upper(u.currency)='SGD'
           and (${start}::date is null or t.transaction_date >= ${start}::date)
           and (${end}::date is null or t.transaction_date < ${end}::date)
           and (${searchFilter})
-        order by ${bankTransactionKey},t.id
+        order by ${sourceKey},t.id
       ) select count(*)::int as count, coalesce(sum(cents),0)::text as "totalCents",
         coalesce((select jsonb_agg(r) from (select * from matched order by date,id limit 100) r),'[]'::jsonb) as records from matched`;
     const data = result[0];
-    return { data: { ...data, totalCents: Number(data.totalCents), records: data.records.map(row=>({ ...row, status: ignoredBankCredit(row.description) ? 'Ignored for reconciliation' : row.matched ? 'PayNow matched (accounted for)' : row.allocated_cents ? 'Saved allocation' : 'Unaccounted', href: `/bank-statements?uploadId=${row.upload_id}#payment-${row.id}` })) }, sources: data.records.map(row=>({label:`${row.date} · SGD ${(row.cents/100).toFixed(2)} · ${row.description}`,href:`/bank-statements?uploadId=${row.upload_id}#payment-${row.id}`})) };
+    return { data: { ...data, transactionType: incoming ? 'credit' : 'debit', totalCents: Number(data.totalCents), records: data.records.map(row=>({ ...row, status: !incoming ? 'Outgoing bank debit' : ignoredBankCredit(row.description) ? 'Ignored for reconciliation' : row.matched ? 'PayNow matched (accounted for)' : row.allocated_cents ? 'Saved allocation' : 'Unaccounted', href: `/bank-statements?uploadId=${row.upload_id}#payment-${row.id}` })) }, sources: data.records.map(row=>({label:`${row.date} · ${incoming ? 'Credit' : 'Debit'} SGD ${(row.cents/100).toFixed(2)} · ${row.description}`,href:`/bank-statements?uploadId=${row.upload_id}#payment-${row.id}`})) };
   }
   if (name === 'find_acuity_bookings') {
     const { start, end } = range(args);
