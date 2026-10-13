@@ -9,6 +9,9 @@ import { parseDateMention } from './date-parser';
 import { executeSemanticQuery } from './result-shaper';
 import { renderAnswer } from './answer-renderer';
 import { getCustomerProfile } from '@/lib/customer-profiles';
+import { studioReportTable } from './report-table';
+import type {ReportTable} from '@/lib/studio-chat-table';
+import {isComparisonQuery} from './semantic-query';
 
 export type EvidenceLink = { label: string; href: string };
 export type ToolResult = { data: unknown; sources: EvidenceLink[] };
@@ -18,6 +21,7 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return { type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 export const studioTools = [
+  tool('get_client_booking_report', 'Return a finished top-client table with exact booking counts, booking-type counts and total Acuity cost in ONE lookup. Use for top clients/customers, client booking reports, and follow-ups adding revenue/types/table to that report. Rank by booking_count unless the user specifically requests highest Acuity value. Preserve the prior range, ranking and limit on follow-ups. Cost is Acuity booking value, not confirmed bank receipts or invoice extras. Dates are Singapore session dates unless dateBasis is created_datetime. Do not fetch each client separately.', {startDate:nullableString,endDateExclusive:nullableString,limit:{type:'integer',minimum:1,maximum:100},rankBy:{type:'string',enum:['booking_count','acuity_cost']},dateBasis:{type:'string',enum:['appointment_datetime','created_datetime']}}),
   tool('get_bank_cash_movement', 'Prepare an exact bank cash-movement summary: credits, debits, net movement and counts calculated by the app. Use this for money-in versus money-out or cash-movement reports instead of doing arithmetic yourself. Returns ready-to-use report text and evidence from both directions. It is not a balance sheet or profit statement.', {startDate:nullableString,endDateExclusive:nullableString}),
   tool('get_customer_profile', 'Find a stored customer profile by name, email or phone. Returns available contact details, full-history counts and Acuity value, plus saved notes/form answers from up to 30 latest bookings. If several people match, ask for clarification and do not merge their details. Missing notes/forms mean not stored. This uses stored database records and does not fetch invoices.', {search:{type:'string'}}),
   tool('find_bank_payments', 'Search actual incoming SGD bank credits. Returns exact count and total over ALL matches, up to 100 evidence rows and their ignored/matched/allocated status. Multiple payer terms are OR; use separate calls for per-payer totals. Raw bank searches include ignored credits; use get_reconciliation_results for unsettled totals.', {
@@ -53,6 +57,42 @@ function pattern(value: string) {
 }
 
 export async function runStudioTool(name: string, args: Args): Promise<ToolResult> {
+  if(name==='get_client_booking_report') {
+    const {start,end}=range(args);
+    const limit=Number(args.limit);
+    if(!Number.isInteger(limit)||limit<1||limit>100) throw new Error('Choose between 1 and 100 clients.');
+    if(!['booking_count','acuity_cost'].includes(String(args.rankBy))||!['appointment_datetime','created_datetime'].includes(String(args.dateBasis))) throw new Error('Choose a valid ranking and booking date basis.');
+    const dateColumn=args.dateBasis==='created_datetime'?sql`a.created_datetime`:sql`a.appointment_datetime`;
+    const ordering=args.rankBy==='acuity_cost'?sql`cost_cents::numeric desc,booking_count desc,identity`:sql`booking_count desc,cost_cents::numeric desc,identity`;
+    type ClientRow={identity:string;client:string;booking_count:number;cost_cents:string;missing_prices:number;example_id:string;types:{type:string;count:number}[]};
+    const clients=await sql<ClientRow[]>`
+      with bookings as (
+        select a.acuity_appointment_id::text as id,
+          coalesce('email:'||nullif(lower(trim(a.client_email)),''),'client:'||a.client_id::text,
+            'phone:'||nullif(regexp_replace(coalesce(a.client_phone,''),'[^0-9]','','g'),'')||':'||lower(trim(concat_ws(' ',a.client_first_name,a.client_last_name))),
+            'name:'||nullif(lower(trim(concat_ws(' ',a.client_first_name,a.client_last_name))),''),'booking:'||a.acuity_appointment_id::text) as identity,
+          coalesce(nullif(trim(concat_ws(' ',a.client_first_name,a.client_last_name)),''),nullif(trim(a.client_email),''),'Unknown customer') as client,
+          coalesce(nullif(a.appointment_type_name,''),'Unknown booking type') as type,round(a.price*100) as cents,a.appointment_datetime
+        from acuity_appointments a where coalesce(a.canceled,false)=false
+          and (${start}::date is null or ${dateColumn}>=(${start}::date::timestamp at time zone 'Asia/Singapore'))
+          and (${end}::date is null or ${dateColumn}<(${end}::date::timestamp at time zone 'Asia/Singapore'))
+      ), totals as (
+        select identity,(array_agg(client order by appointment_datetime desc,id))[1] as client,count(*)::int as booking_count,
+          coalesce(sum(cents),0)::text as cost_cents,count(*) filter(where cents is null)::int as missing_prices,
+          (array_agg(id order by appointment_datetime desc,id))[1] as example_id from bookings group by identity
+      ), selected as (select * from totals order by ${ordering} limit ${limit}),
+      types as (select b.identity,b.type,count(*)::int as count from bookings b join selected s on s.identity=b.identity group by b.identity,b.type)
+      select s.*,coalesce((select jsonb_agg(t order by t.count desc,t.type) from types t where t.identity=s.identity),'[]'::jsonb) as types
+        from selected s order by ${ordering}`;
+    const table:ReportTable={columns:[{key:'client',label:'Client name',format:'text'},{key:'bookings',label:'Number of bookings',format:'number'},{key:'types',label:'Booking types',format:'text'},{key:'cost',label:'Acuity cost',format:'money'}],
+      rows:clients.map(row=>({client:clients.some(other=>other.identity!==row.identity&&other.client===row.client)&&row.identity.startsWith('email:')?`${row.client} (${row.identity.slice(6)})`:row.client,
+        bookings:row.booking_count,types:row.types.map(type=>`${type.type} (${type.count})`).join('\n'),cost:row.missing_prices?null:Number(row.cost_cents)/100}))};
+    const lastDay=end?new Date(Date.parse(end)-86400000).toISOString().slice(0,10):'latest stored date';
+    const missing=clients.reduce((sum,row)=>sum+row.missing_prices,0);
+    const total=clients.reduce((sum,row)=>sum+Number(row.cost_cents),0);
+    const answer=`Top ${clients.length} clients by ${args.rankBy==='acuity_cost'?'Acuity cost':'number of bookings'}\nPeriod: ${start??'earliest stored date'} to ${lastDay}, by ${args.dateBasis==='created_datetime'?'booking created date':'Singapore session date'}.\n\n${clients.reduce((sum,row)=>sum+row.booking_count,0)} bookings in the clients shown. ${missing?`${missing} bookings have no saved price; affected client costs are unavailable.`:`Total Acuity cost for these clients: SGD ${(total/100).toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2})}.`}\n\nCancelled bookings excluded. Acuity cost is booking value, not confirmed bank receipts; invoice-only extras are unavailable.`;
+    return {data:{report:{answer,table},startDate:start,endDateExclusive:end,limit,rankBy:args.rankBy,dateBasis:args.dateBasis},sources:clients.slice(0,20).map(row=>({label:`${row.client} · example booking`,href:`/acuity/appointments/${row.example_id}`}))};
+  }
   if (name === 'get_bank_cash_movement') {
     const {start,end}=range(args);
     const credits=await runStudioTool('find_bank_payments',{searchTerms:[],startDate:start,endDateExclusive:end});
@@ -164,7 +204,11 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     const validated = validateAndNormalizeSemanticQuery(raw,args.question,parseDateMention(args.question));
     if (validated.type==='clarification') return {data:validated,sources:[]};
     const result = await executeSemanticQuery(validated.query);
-    return {data:{...renderAnswer(validated.query,result),resolvedQuery:validated.query},sources:[]};
+    const rendered=renderAnswer(validated.query,result);
+    const table=studioReportTable(rendered.columns,rendered.rows);
+    const queries=isComparisonQuery(validated.query)?validated.query.queries:[validated.query];
+    const scopes=queries.map(query=>`${query.domain==='acuity'?'Acuity booking value is not confirmed bank receipts.':'Raw bank movements include transfers and items ignored for reconciliation.'} ${query.dateRange?`Period: ${query.dateRange.startDate} to ${new Date(Date.parse(query.dateRange.endDateExclusive)-86400000).toISOString().slice(0,10)}.`:'Coverage: all stored records.'}`);
+    return {data:{report:{answer:[rendered.answer,...new Set(scopes)].join('\n\n'),table}},sources:[]};
   }
   throw new Error('Unknown studio tool.');
 }

@@ -129,7 +129,7 @@ function selectedDateBasis(query: SemanticQuery): DateBasis {
 
 function dimensionExpression(query: SemanticQuery, name: string, dateBasis: DateBasis): string {
   const dimension = semanticModel[query.domain].dimensions[name];
-  if ((name === "month" || name === "year") && isTemporalDateBasis(dateBasis)) return `date_trunc('${name}', ${dateBasis})::date`;
+  if ((name === "month" || name === "year") && isTemporalDateBasis(dateBasis)) return `date_trunc('${name}', ${query.domain==='acuity'?`${dateBasis} AT TIME ZONE '${ACUITY_REPORT_TIME_ZONE}'`:dateBasis})::date`;
   return dimension.expression ?? dimension.column ?? name;
 }
 
