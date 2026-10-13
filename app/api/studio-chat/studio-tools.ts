@@ -18,6 +18,7 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return { type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 export const studioTools = [
+  tool('get_bank_cash_movement', 'Prepare an exact bank cash-movement summary: credits, debits, net movement and counts calculated by the app. Use this for money-in versus money-out or cash-movement reports instead of doing arithmetic yourself. Returns ready-to-use report text and evidence from both directions. It is not a balance sheet or profit statement.', {startDate:nullableString,endDateExclusive:nullableString}),
   tool('get_customer_profile', 'Find a stored customer profile by name, email or phone. Returns available contact details, full-history counts and Acuity value, plus saved notes/form answers from up to 30 latest bookings. If several people match, ask for clarification and do not merge their details. Missing notes/forms mean not stored. This uses stored database records and does not fetch invoices.', {search:{type:'string'}}),
   tool('find_bank_payments', 'Search actual incoming SGD bank credits. Returns exact count and total over ALL matches, up to 100 evidence rows and their ignored/matched/allocated status. Multiple payer terms are OR; use separate calls for per-payer totals. Raw bank searches include ignored credits; use get_reconciliation_results for unsettled totals.', {
     searchTerms: { type: 'array', items: { type: 'string' }, maxItems: 8 }, startDate: nullableString, endDateExclusive: nullableString,
@@ -52,6 +53,19 @@ function pattern(value: string) {
 }
 
 export async function runStudioTool(name: string, args: Args): Promise<ToolResult> {
+  if (name === 'get_bank_cash_movement') {
+    const {start,end}=range(args);
+    const credits=await runStudioTool('find_bank_payments',{searchTerms:[],startDate:start,endDateExclusive:end});
+    const debits=await runStudioTool('find_bank_debits',{searchTerms:[],startDate:start,endDateExclusive:end});
+    const incoming=credits.data as {count:number;totalCents:number};
+    const outgoing=debits.data as {count:number;totalCents:number};
+    const net=incoming.totalCents-outgoing.totalCents;
+    const money=(cents:number)=>`SGD ${(cents/100).toLocaleString('en-SG',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    const lastDay=end ? new Date(Date.parse(end)-86400000).toISOString().slice(0,10) : 'latest uploaded date';
+    const period=`${start??'earliest uploaded date'} to ${lastDay}`;
+    const reportText=`Bank Cash-Movement Report\nPeriod: ${period}\n\nTotal credits: ${money(incoming.totalCents)} across ${incoming.count} incoming transactions.\nTotal debits: ${money(outgoing.totalCents)} across ${outgoing.count} outgoing transactions.\nNet bank movement: ${money(net)} (${net>=0?'net inflow':'net outflow'}).\n\nCoverage: uploaded SGD bank transactions, with duplicate source records counted once. Credits include transfers and items ignored for reconciliation.\n\nThis is a cash-movement report, not a complete balance sheet or profit statement. It does not establish opening cash, other assets, liabilities or equity.`;
+    return {data:{period,creditCents:incoming.totalCents,debitCents:outgoing.totalCents,netCents:net,creditCount:incoming.count,debitCount:outgoing.count,reportText},sources:[...credits.sources.slice(0,10),...debits.sources.slice(0,10)]};
+  }
   if (name === 'get_customer_profile') {
     if (typeof args.search !== 'string') throw new Error('Specify the customer to look up.');
     const data = await getCustomerProfile(args.search);
