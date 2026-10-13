@@ -1,3 +1,4 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import 'server-only'
 
 import {
@@ -7,6 +8,8 @@ import {
 } from '@/lib/acuity/sync'
 
 export async function GET(request: Request) {
+  const denied=await authorizeApiRequest(request,false);if(denied)return denied;
+
   const url = new URL(request.url)
   const fromParam = url.searchParams.get('from')
   const toParam = url.searchParams.get('to')

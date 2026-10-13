@@ -1,6 +1,9 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 const ACUITY_APPOINTMENTS_URL = 'https://acuityscheduling.com/api/v1/appointments'
 
 export async function GET() {
+  const denied=await authorizeApiRequest(undefined,false);if(denied)return denied;
+
   const userId = process.env.ACUITY_USER_ID
   const apiKey = process.env.ACUITY_API_KEY
 

@@ -52,6 +52,7 @@ function validateSingleQuery(raw: SemanticQuery, question: string, parsedDate: P
   const query = normalizeSingleQuery(raw, parsedDate, undefined, undefined, question);
   if (!query) return { type: "clarification", question: "Should I look at bank transactions or Acuity bookings?", options: ["Bank", "Acuity"] };
   applyDeterministicRouting(query, question);
+  applyGroupedReportIntent(query, question);
   if (query.metrics.length === 0) return { type: "clarification", question: `Which ${query.domain === "bank" ? "bank" : "Acuity"} metric should I use?` };
   if (query.domain === "bank" && isCombinedBankMovement(query.metrics) && !hasBankRowWording(question)) query.resultMode = "aggregate_only";
   applyAdvancedAggregateIntent(query, question);
@@ -122,8 +123,8 @@ function applyAdvancedAggregateIntent(query: SemanticQuery, question: string) {
     if (topLimit && (query.dimensions ?? []).length) {
       query.resultMode = "aggregate_only";
       query.rowLimit = topLimit;
-      query.metrics = /\b(?:revenue|value|price)\b/.test(q) ? ["booking_value"] : ["booking_count"];
-      query.orderBy = { field: query.metrics[0], direction: "desc" };
+      if(!query.metrics.includes('booking_count')||!query.metrics.includes('booking_value')) query.metrics = /\b(?:revenue|value|price|cost)\b/.test(q) ? ["booking_value"] : ["booking_count"];
+      query.orderBy = { field: /\bby\s+(?:acuity\s+|booking\s+)?(?:revenue|value|price|cost)\b/.test(q)?'booking_value':query.metrics.includes('booking_count')?'booking_count':query.metrics[0], direction: "desc" };
     }
   }
 
@@ -142,6 +143,43 @@ function applyAdvancedAggregateIntent(query: SemanticQuery, question: string) {
   }
 
   if (/\b(?:by month|monthly)\b/.test(q) && !(query.dimensions ?? []).includes("month")) query.dimensions = [ ...(query.dimensions ?? []), "month" ];
+}
+
+// Grouped reports must aggregate records, not search for invented status filters.
+function applyGroupedReportIntent(query:SemanticQuery,question:string) {
+  const q=question.toLowerCase();
+  const dimensions:string[]=[];
+  if(/\b(?:by|per|each)\s+months?\b|\bmonthly\b/.test(q))dimensions.push('month');
+  if(/\b(?:by|per|each)\s+years?\b|\byearly\b/.test(q))dimensions.push('year');
+  if(/\b(?:by|per|each)\s+(?:rooms?|calendars?)\b/.test(q))dimensions.push('calendar_name');
+  if(/\b(?:by|per|each)\s+(?:booking|appointment|session)\s+types?\b/.test(q))dimensions.push('appointment_type_name');
+  if(/\b(?:by|per|each)\s+(?:clients?|customers?)\b/.test(q))dimensions.push('client_name');
+  if(!dimensions.length)return;
+  const acuity=/\bacuity\b|\bbooking\s+(?:counts?|value|cost)|\b(?:bookings?|appointments?|sessions?|rooms?|calendars?|clients?|customers?)\b/.test(q);
+  const bank=/\bbank\b|\b(?:credits?|debits?|expenses?|inflows?|outflows?|paynow)\b/.test(q);
+  if(acuity&&!bank) {
+    query.domain='acuity';
+    const metrics:string[]=[];
+    if(/\b(?:booking|appointment|session)s?\s+counts?\b|\b(?:number|count|counts)\s+(?:of\s+)?(?:bookings?|appointments?|sessions?)\b/.test(q))metrics.push('booking_count');
+    if(/\b(?:revenue|value|cost)\b/.test(q)&&!aggregatePrefix(q))metrics.push('booking_value');
+    if(/\b(?:number|count)\s+(?:of\s+)?(?:clients?|customers?)\b/.test(q))metrics.push('client_count');
+    query.metrics=metrics.length?metrics:query.metrics.filter(metric=>metric in semanticModel.acuity.metrics);
+    if(!query.metrics.length)query.metrics=['booking_count'];
+    query.filters={...query.filters,dateBasis:normalizeDateBasis('acuity',query.filters?.dateBasis)};
+    delete query.filters.transactionType;
+  }
+  if(query.domain==='bank') {
+    const metrics:string[]=[];
+    if(/\b(?:credits?|income|inflows?)\b/.test(q))metrics.push('bank_credits');
+    if(/\b(?:debits?|expenses?|outflows?)\b/.test(q))metrics.push('bank_debits');
+    if(metrics.length===2||/\b(?:net|movement)\b/.test(q))metrics.push('net_movement');
+    if(metrics.length&&!aggregatePrefix(q))query.metrics=[...new Set(metrics)];
+    query.filters={...query.filters,transactionType:normalizeTransactionType(query.metrics,null)};
+  }
+  query.dimensions=dimensions.filter(dimension=>dimension in semanticModel[query.domain].dimensions);
+  query.resultMode='aggregate_only';query.rowLimit=0;
+  const search=query.filters?.searchText?.trim();
+  if(search&&(/[!=<>]|\b(?:status|cancelled|canceled|non-cancelled|non-canceled|exclude|excluding|true|false)\b/i.test(search)||/^(all|none|null)$/i.test(search)))query.filters={...query.filters,searchText:null};
 }
 
 function aggregatePrefix(question: string): "average" | "highest" | "lowest" | null {

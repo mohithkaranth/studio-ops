@@ -1,4 +1,5 @@
-import { headers } from 'next/headers'
+import {requireStudioSession} from '@/lib/studio-auth-request';
+import { syncAcuityAppointments } from '@/lib/acuity/sync'
 import { redirect } from 'next/navigation'
 import { sql } from '@/lib/db'
 
@@ -15,16 +16,16 @@ async function hasRecordsSkippedColumn(){ const r=await sql`select exists (selec
 
 async function syncAcuityAction(){
   'use server'
+  await requireStudioSession();
+
   const now=new Date(); const from=new Date(now); from.setUTCDate(from.getUTCDate()-30); const to=new Date(now); to.setUTCDate(to.getUTCDate()+180)
-  const fromYmd=from.toISOString().slice(0,10); const toYmd=to.toISOString().slice(0,10)
-  const h=await headers(); const host=h.get('x-forwarded-host')??h.get('host'); const proto=h.get('x-forwarded-proto')??'http'
-  if(!host) throw new Error('Unable to resolve host for sync request.')
-  const response=await fetch(`${proto}://${host}/api/acuity/sync?from=${fromYmd}&to=${toYmd}`,{method:'GET',cache:'no-store'})
-  if(!response.ok){ const payload=(await response.json().catch(()=>null)) as {message?:string}|null; throw new Error(payload?.message??`Acuity sync failed with status ${response.status}.`) }
+  await syncAcuityAppointments({startDate:from,endDate:to})
   redirect('/acuity/dashboard')
 }
 
 export default async function AcuityDashboardPage(){
+  await requireStudioSession();
+
   const hasSkipped=await hasRecordsSkippedColumn()
   const lastSyncRows=hasSkipped?await sql`select id,status,from_date,to_date,records_fetched,records_inserted,records_updated,records_skipped,finished_at,error_message from acuity_sync_runs order by started_at desc limit 1`:await sql`select id,status,from_date,to_date,records_fetched,records_inserted,records_updated,finished_at,error_message from acuity_sync_runs order by started_at desc limit 1`
   const lastSync=(lastSyncRows[0] as LastSyncRun|undefined)??null

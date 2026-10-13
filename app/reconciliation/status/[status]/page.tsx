@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import BackToPrevious from "@/app/components/BackToPrevious";
 import { notFound } from "next/navigation";
 import ReconciliationTable from "../../ReconciliationTable";
@@ -22,6 +23,8 @@ export default async function ReconciliationStatusPage({ params, searchParams }:
   params: Promise<{ status: string }>;
   searchParams: SearchParams;
 }) {
+  await requireStudioSession();
+
   const [{ status }, query] = await Promise.all([params, searchParams]);
   const selected = reconciliationStatuses.find(item => item.slug === status);
   if (!selected) notFound();

@@ -20,6 +20,14 @@ export default function AcuitySyncNotifier() {
 
     async function poll() {
       const response = await fetch('/api/acuity/manual-sync', { cache: 'no-store' })
+      if(response.status===401) {
+        const retry=await fetch('/api/acuity/manual-sync',{cache:'no-store'});
+        if(retry.status===401&&!cancelled) {
+          try {localStorage.removeItem('studio-chat-conversation-v2')}catch{/* The server still rejects expired sessions. */}
+          window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname+window.location.search)}`)
+        }
+        return
+      }
       const payload = (await response.json().catch(() => null)) as { run?: ManualSyncRun | null } | null
       const run = payload?.run
 

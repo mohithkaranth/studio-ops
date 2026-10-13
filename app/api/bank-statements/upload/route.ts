@@ -1,3 +1,4 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import * as XLSX from "xlsx";
@@ -276,6 +277,8 @@ function parseWorkbook(buffer: Buffer) {
 }
 
 export async function POST(request: Request) {
+  const denied=await authorizeApiRequest(request,true);if(denied)return denied;
+
   try {
     const formData = await request.formData();
     const file = formData.get("file");
@@ -380,7 +383,7 @@ export async function POST(request: Request) {
             ${transaction.debit},
             ${transaction.credit},
             ${transaction.running_balance},
-            ${sql.json(transaction.raw_row as any)},
+            ${sql.json(transaction.raw_row as Parameters<typeof sql.json>[0])},
             ${transaction.row_hash}
           )
         `;

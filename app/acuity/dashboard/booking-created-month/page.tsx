@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from "next/link";
 import { sql } from "@/lib/db";
 
@@ -160,6 +161,8 @@ export default async function BookingCreatedMonthReportPage({
 }: {
   searchParams: SearchParams;
 }) {
+  await requireStudioSession();
+
   const params = await searchParams;
   const range = getMonthRange(params.month);
   const limit = getLimit(params.limit);

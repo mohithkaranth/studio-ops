@@ -1,3 +1,4 @@
+import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from "next/link";
 import ReconciliationTable from "./ReconciliationTable";
 import ReconciliationFilters from "./ReconciliationFilters";
@@ -16,6 +17,8 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
 
 export default async function ReconciliationPage({ searchParams }: { searchParams: SearchParams }) {
+  await requireStudioSession();
+
   const params = await searchParams;
   const [periods, bankCoverage] = await Promise.all([getReconciliationPeriods(), getBankStatementCoverage()]);
   const fallback = defaultPeriod(periods);

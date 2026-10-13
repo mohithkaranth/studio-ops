@@ -1,9 +1,12 @@
+import {authorizeApiRequest} from '@/lib/studio-auth-request';
 import { sql } from "@/lib/db";
 import { ensureBankAllocationTables, bankTransactionKey } from "@/lib/bank-allocations";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const denied=await authorizeApiRequest(request,false);if(denied)return denied;
+
   await ensureBankAllocationTables();
   const uploads = await sql<
     {

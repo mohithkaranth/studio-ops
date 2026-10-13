@@ -24,3 +24,12 @@ test('validated client and general reports finish without per-row investigation 
     }
   } finally {globalThis.fetch=fetchBefore;if(keyBefore===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=keyBefore;}
 });
+test('monthly count and cost reports cannot turn cancellation instructions into a customer search',()=>{
+  const {validateAndNormalizeSemanticQuery}=loadTs('app/api/studio-chat/semantic-validator.ts');
+  const {parseDateMention}=loadTs('app/api/studio-chat/date-parser.ts');
+  const question='Show Acuity booking counts and total Acuity cost by month from January to September 2026 as a table.';
+  const result=validateAndNormalizeSemanticQuery({domain:'acuity',metrics:['booking_count'],dimensions:[],filters:{searchText:'status!=cancelled'},resultMode:'aggregate_with_rows',rowLimit:100},question,parseDateMention(question));
+  assert.equal(result.type,'query');assert.equal(result.query.resultMode,'aggregate_only');
+  assert.deepEqual(result.query.metrics,['booking_count','booking_value']);assert.deepEqual(result.query.dimensions,['month']);
+  assert.equal(result.query.filters.searchText,null);assert.equal(result.query.dateRange.endDateExclusive,'2026-10-01');
+});
