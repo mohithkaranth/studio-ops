@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
+import {reportCell,reportTableText,validReportTable,type ReportTable} from '@/lib/studio-chat-table';
 
-type Message = { role:'user'|'assistant'; content:string; sources?:{label:string;href:string}[] };
+type Message = { role:'user'|'assistant'; content:string; sources?:{label:string;href:string}[];table?:ReportTable };
 const STORAGE_KEY = 'studio-chat-conversation-v2';
 export default function StudioChatPage() {
   const [messages,setMessages] = useState<Message[]>([]);
@@ -38,12 +39,13 @@ export default function StudioChatPage() {
   async function ask(event:FormEvent) {
     event.preventDefault();
     const trimmed=question.trim(); if(!trimmed||loading) return;
-    const history=messages.map(message=>({role:message.role,content:message.content}));
-    setMessages(previous=>[...previous,{role:'user',content:trimmed}]); setQuestion(''); setLoading(true); setError('');
+    const retry=messages.at(-1)?.role==='user'&&messages.at(-1)?.content===trimmed;
+    const history=(retry?messages.slice(0,-1):messages).map(message=>({role:message.role,content:message.content+(validReportTable(message.table)?`\n\nReport table:\n${reportTableText(message.table)}`:'')}));
+    if(!retry)setMessages(previous=>[...previous,{role:'user',content:trimmed}]); setQuestion(''); setLoading(true); setError('');setExportNotice('');
     try {
       const response=await fetch('/api/studio-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:trimmed,history}),signal:AbortSignal.timeout(260000)});
       const result=await response.json(); if(!response.ok) throw new Error(result.error??'Studio Chat could not finish.');
-      setMessages(previous=>[...previous,{role:'assistant',content:result.answer,sources:result.sources}]);
+      setMessages(previous=>[...previous,{role:'assistant',content:result.answer,sources:result.sources,table:validReportTable(result.table)?result.table:undefined}]);
     } catch(issue) { setError(issue instanceof Error?issue.message:'The connection failed. Please retry.'); setQuestion(trimmed); }
     finally { setLoading(false); }
   }
@@ -51,6 +53,7 @@ export default function StudioChatPage() {
     <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-semibold">Studio Chat</h1><p className="mt-2 text-sm text-zinc-400">Ask about bookings, bank payments or reconciliation. Follow-up questions stay in this conversation.</p></div><div className="flex flex-wrap gap-2"><button disabled={loading||exporting||!ready||!messages.length} onClick={()=>downloadPdf()} className="rounded border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50">{exporting?'Creating PDF…':'Download conversation'}</button><button disabled={loading||exporting||!ready} onClick={()=>{setMessages([]);setError('');setQuestion('');setExportNotice('');}} className="rounded border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50">New conversation</button></div></header>
     <div className="space-y-4" aria-live="polite">{messages.map((message,index)=><section key={index} className={`rounded-xl border p-5 ${message.role==='user'?'ml-8 border-zinc-700 bg-zinc-900':'mr-8 border-zinc-800 bg-zinc-900/40'}`}>
       <p className="mb-2 text-xs uppercase text-zinc-500">{message.role==='user'?'You':'Studio Chat'}</p><p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+      {validReportTable(message.table)?<div className="mt-5 overflow-x-auto rounded-lg border border-zinc-700"><table aria-label="Studio report" className="w-full min-w-[600px] text-left text-sm"><thead className="bg-zinc-800"><tr>{message.table.columns.map(column=><th key={column.key} scope="col" className={`px-4 py-3 font-semibold ${column.format==='text'?'':'text-right'}`}>{column.label}</th>)}</tr></thead><tbody>{message.table.rows.map((row,rowIndex)=><tr key={rowIndex} className="border-t border-zinc-800 even:bg-zinc-900">{message.table!.columns.map(column=><td key={column.key} className={`whitespace-pre-wrap px-4 py-3 align-top ${column.format==='text'?'':'text-right tabular-nums'}`}>{reportCell(row[column.key],column.format)}</td>)}</tr>)}</tbody></table></div>:null}
       {message.role==='assistant'?<button disabled={loading||exporting} onClick={()=>downloadPdf(index)} className="mt-4 rounded border border-zinc-700 px-3 py-2 text-sm disabled:opacity-50">Download report</button>:null}
       {message.sources?.length?<details className="mt-4 text-sm"><summary className="cursor-pointer text-zinc-400">View supporting records ({message.sources.length})</summary><ul className="mt-3 space-y-2">{message.sources.filter(source=>/^\/(acuity\/appointments\/\d+|bank-statements\?|reconciliation\/unsettled\?)/.test(source.href)).map(source=><li key={source.href}><Link className="underline underline-offset-4" href={source.href}>{source.label}</Link></li>)}</ul></details>:null}
     </section>)}</div>

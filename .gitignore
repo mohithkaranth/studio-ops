@@ -41,3 +41,4 @@ yarn-error.log*
 next-env.d.ts
 # Generated PDF verification files
 /output/pdf/
+/tmp/pdfs/

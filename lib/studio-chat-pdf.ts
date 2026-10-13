@@ -1,6 +1,7 @@
 import {PDFDocument,PDFName,PDFString,rgb,type PDFPage,type PDFFont} from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-export type PdfChatMessage={role:'user'|'assistant';content:string;sources?:{label:string;href:string}[]};
+import {reportCell,validReportTable,type ReportTable} from './studio-chat-table';
+export type PdfChatMessage={role:'user'|'assistant';content:string;sources?:{label:string;href:string}[];table?:ReportTable};
 export type PdfExport={mode:'report'|'conversation';messages:PdfChatMessage[];origin:string;question?:string;exportedAt?:Date};
 
 function clean(text:string) {return text.replace(/[\u2010-\u2015\u2212]/g,'-').replace(/\r\n?/g,'\n').replace(/\t/g,'    ').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'');}
@@ -38,7 +39,8 @@ export async function createStudioChatPdf(options:PdfExport,fontBytes:Uint8Array
   const title=options.mode==='report'?'Studio Report':'Conversation Transcript';
   const exportedAt=options.exportedAt??new Date();
   doc.setTitle(`Tonehouse Studios - ${title}`);doc.setAuthor('Tonehouse Studios');doc.setCreationDate(exportedAt);
-  const width=595.28,height=841.89,margin=44,bodyWidth=width-margin*2;
+  const landscape=options.messages.some(message=>validReportTable(message.table)&&message.table.columns.length>5);
+  const width=landscape?841.89:595.28,height=landscape?595.28:841.89,margin=44,bodyWidth=width-margin*2;
   const navy=rgb(.09,.14,.21),ink=rgb(.12,.16,.22),muted=rgb(.4,.44,.5),blue=rgb(.12,.32,.57);
   let page:PDFPage;let y=0;
   function newPage() {
@@ -59,6 +61,52 @@ export async function createStudioChatPdf(options:PdfExport,fontBytes:Uint8Array
   }
   function paragraph(text:string,size=10.5,color=ink,href?:string) {for(const part of wrapPdfText(printable(text),font,size,bodyWidth)) line(part,size,color,href);}
   function section(label:string) {if(y<105)newPage();y-=9;line(label,12,blue);y-=4;}
+  function table(report:ReportTable) {
+    const padding=7,size=9,leading=13.5;
+    const weights=report.columns.map(column=>column.format==='number'?Math.max(13,column.label.length*.7):column.format==='money'?15:Math.min(38,Math.max(16,column.label.length,...report.rows.map(row=>String(row[column.key]??'').split('\n').reduce((max,part)=>Math.max(max,part.length),0)))));
+    const total=weights.reduce((sum,weight)=>sum+weight,0);
+    const widths=weights.map(weight=>bodyWidth*weight/total);
+    const wrap=(value:string,index:number)=>wrapPdfText(printable(value),font,size,widths[index]-padding*2);
+    const headers=report.columns.map((column,index)=>wrap(column.label,index));
+    const headerHeight=Math.max(...headers.map(lines=>lines.length))*leading+padding*2;
+    function cells(lines:string[][],top:number,offset:number,count:number,header=false) {
+      let x=margin;
+      lines.forEach((parts,index)=>{
+        for(let j=0;j<count;j++) {
+          const text=parts[offset+j]??'';
+          if(!text)continue;
+          const right=report.columns[index].format!=='text';
+          page.drawText(text,{x:right?x+widths[index]-padding-font.widthOfTextAtSize(text,size):x+padding,y:top-padding-size-j*leading,size,font,color:header?rgb(1,1,1):ink});
+        }
+        x+=widths[index];
+      });
+    }
+    function header() {
+      page.drawRectangle({x:margin,y:y-headerHeight,width:bodyWidth,height:headerHeight,color:navy});
+      cells(headers,y,0,Math.max(...headers.map(lines=>lines.length)),true);y-=headerHeight;
+    }
+    const first=report.rows[0];
+    const firstHeight=first?Math.max(...report.columns.map((column,index)=>wrap(reportCell(first[column.key],column.format),index).length))*leading+padding*2:0;
+    if(y-headerHeight-Math.min(firstHeight,100)<55)newPage();
+    y-=8;header();
+    report.rows.forEach((row,rowIndex)=>{
+      const lines=report.columns.map((column,index)=>wrap(reportCell(row[column.key],column.format),index));
+      const count=Math.max(...lines.map(parts=>parts.length));
+      let offset=0;
+      if(y-count*leading-padding*2<55&&count*leading+padding*2<height-126-headerHeight-55) {newPage();header();}
+      while(offset<count) {
+        const available=Math.floor((y-55-padding*2)/leading);
+        if(available<1) {newPage();header();continue;}
+        const take=Math.min(available,count-offset),rowHeight=take*leading+padding*2;
+        page.drawRectangle({x:margin,y:y-rowHeight,width:bodyWidth,height:rowHeight,color:rowIndex%2?rgb(.95,.96,.98):rgb(1,1,1)});
+        cells(lines,y,offset,take);y-=rowHeight;
+        page.drawLine({start:{x:margin,y},end:{x:width-margin,y},thickness:.5,color:rgb(.83,.85,.88)});
+        offset+=take;
+        if(offset<count){newPage();header();}
+      }
+    });
+    y-=12;
+  }
   newPage();
   paragraph(`Exported ${new Intl.DateTimeFormat('en-SG',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Singapore'}).format(exportedAt)} (Singapore)`,9,muted);
   y-=12;
@@ -68,6 +116,7 @@ export async function createStudioChatPdf(options:PdfExport,fontBytes:Uint8Array
     if(message.role==='user') questionNumber++;
     section(options.mode==='report'?'Report':message.role==='user'?`Question ${questionNumber}`:'Studio Chat');
     paragraph(message.content);
+    if(validReportTable(message.table)) table(message.table);
     const sources=(message.sources??[]).map(source=>({...source,url:recordUrl(source.href,options.origin)})).filter(source=>source.url);
     if(sources.length) {
       const sourceHeight=(source:typeof sources[number])=>wrapPdfText(printable(source.label),font,9,bodyWidth).length*13.5+wrapPdfText(source.url!,font,8,bodyWidth).length*12+5;

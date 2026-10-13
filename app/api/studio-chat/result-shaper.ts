@@ -24,7 +24,7 @@ export async function executeSemanticQuery(query: SemanticQueryPayload): Promise
   if (query.resultMode === "aggregate_only") {
     const aggregateQuery = buildAggregateQuery(query);
     const aggregateRows = await aggregateQuery;
-    return { mode: query.resultMode, aggregateRows: sortAggregateRows(aggregateRows, query.dimensions ?? []), sqlDebug: collectSqlDebug(aggregateQuery) };
+    return { mode: query.resultMode, aggregateRows: query.orderBy?aggregateRows:sortAggregateRows(aggregateRows, query.dimensions ?? []), sqlDebug: collectSqlDebug(aggregateQuery) };
   }
   if (!query.rowLimit) throw new Error("Row result modes require a normalized rowLimit");
   const rowsQuery = buildRowsQuery(query);

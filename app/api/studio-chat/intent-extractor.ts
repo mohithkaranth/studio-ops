@@ -8,6 +8,7 @@ export async function extractSemanticQuery(question: string): Promise<SemanticQu
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(45000),
     body: JSON.stringify({
       model: MODEL,
       input: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: question }],

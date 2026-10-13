@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {wrapPdfText,recordUrl} from '../lib/studio-chat-pdf.ts';
+import {loadTs} from './ts-loader.mjs';
+const {wrapPdfText,recordUrl}=loadTs('lib/studio-chat-pdf.ts');
 test('long references wrap within the printable width without dropping text',()=>{
   const measure={widthOfTextAtSize:(text,size)=>text.length*size};
   const text='Averylongbankreference1234567890';
