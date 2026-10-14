@@ -12,7 +12,7 @@ export async function getCustomerProfile(search: string) {
     : terms.reduce((condition,term)=>sql`${condition} and concat_ws(' ',first_name,last_name,email,phone,booking_id) ilike ${'%'+term+'%'}`,sql`true`);
   const matches = await sql<Candidate[]>`
     with raw_candidates as (
-      select coalesce('email:'||nullif(lower(trim(email)),''),'phone:'||nullif(case when length(regexp_replace(phone,'[^0-9]','','g'))=8 then '65'||regexp_replace(phone,'[^0-9]','','g') else regexp_replace(phone,'[^0-9]','','g') end,''),'client:'||id::text) as identity,
+      select coalesce('email:'||nullif(lower(trim(split_part(replace(email,';',','),',',1))),''),'phone:'||nullif(case when length(regexp_replace(phone,'[^0-9]','','g'))=8 then '65'||regexp_replace(phone,'[^0-9]','','g') else regexp_replace(phone,'[^0-9]','','g') end,''),'client:'||id::text) as identity,
         id as client_id,null::text as booking_id,first_name,last_name,email,phone,raw_json,0 as priority,null::timestamptz as session_date
       from acuity_clients
       union all
