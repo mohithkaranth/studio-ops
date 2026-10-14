@@ -41,7 +41,7 @@ try {
   await insert('Old Name',' USER@EXAMPLE.TEST ',null,'2020-01-05');
   await insert('Old Name','user@example.test',null,'2020-01-20');
   await insert('New Name','user@example.test',null,'2020-02-05');
-  await insert('New Name','user@example.test',null,'2020-02-20');
+  await insert('New Name','user@example.test, someoneelse@example.test',null,'2020-02-20');
   await insert('New Name','other@example.test',null,'2020-02-20');
   await insert('Phone Old',null,'+65 8123-4567','2020-01-05');
   await insert('Phone New',' ','6581234567','2020-02-05');
