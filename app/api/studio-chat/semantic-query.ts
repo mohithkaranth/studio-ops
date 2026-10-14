@@ -19,6 +19,7 @@ export type SemanticQuery = {
   metrics: string[];
   dimensions?: string[];
   filters?: {
+    customerKey?: string;
     searchText?: string | null;
     transactionType?: "credit" | "debit" | "both" | null;
     dateBasis?: "transaction_date" | "value_date" | "appointment_datetime" | "created_datetime" | null;

@@ -12,5 +12,6 @@ test('long references wrap within the printable width without dropping text',()=
 test('PDF evidence links retain the studio origin and reject external or script destinations',()=>{
   const origin='https://studio-ops-green.vercel.app';
   assert.equal(recordUrl('/bank-statements?uploadId=24#payment-2307',origin),origin+'/bank-statements?uploadId=24#payment-2307');
+  assert.equal(recordUrl('/customer-analytics?analysed=1&fromMonth=2025-07',origin),origin+'/customer-analytics?analysed=1&fromMonth=2025-07');
   for(const href of ['//external.example/data','https://external.example/data','javascript:alert(1)','/api/admin']) assert.equal(recordUrl(href,origin),null);
 });

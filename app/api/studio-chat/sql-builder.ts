@@ -1,3 +1,4 @@
+import {CUSTOMER_IDENTITY_SQL} from '@/lib/customer-identity';
 import { sql } from "@/lib/db";
 import { semanticModel, type DateBasis } from "./semantic-model";
 import type { SemanticQuery } from "./semantic-query";
@@ -11,7 +12,6 @@ type SqlParts = { where: string[]; params: (string | number)[] };
 const ACUITY_REPORT_TIME_ZONE = "Asia/Singapore";
 
 function runUnsafe(queryText: string, params: (string | number)[]): BuiltQuery {
-  console.info("Studio Chat generated SQL", { sql: queryText, params });
   const query = sql.unsafe(queryText, params) as unknown as BuiltQuery;
   query.debugSql = { sql: queryText, params: [...params] };
   return query;
@@ -23,11 +23,11 @@ export function buildAggregateQuery(query: SemanticQuery): BuiltQuery {
   const select: string[] = [];
   const dateBasis = selectedDateBasis(query);
   dimensions.forEach((name) => {
-    select.push(`${dimensionExpression(query, name, dateBasis)} AS ${name}`);
+    select.push(query.domain === "acuity" && name === "client_name" ? `(ARRAY_AGG(${dimensionExpression(query, name, dateBasis)} ORDER BY appointment_datetime DESC, acuity_appointment_id))[1] AS ${name}` : `${dimensionExpression(query, name, dateBasis)} AS ${name}`);
   });
   query.metrics.forEach((name) => select.push(`${model.metrics[name].expression} AS ${name}`));
   const parts = buildWhere(query);
-  const groupBy = dimensions.length ? ` GROUP BY ${dimensions.map((_, i) => i + 1).join(", ")}` : "";
+  const groupBy = dimensions.length ? ` GROUP BY ${dimensions.map((name, i) => query.domain === "acuity" && name === "client_name" ? CUSTOMER_IDENTITY_SQL : String(i + 1)).join(", ")}` : "";
   const orderBy = aggregateOrderBy(query, dimensions);
   const limit = aggregateLimit(query, parts.params);
   return runUnsafe(`SELECT ${select.join(", ")} FROM ${model.table}${whereSql(parts.where)}${groupBy}${orderBy}${limit}`, parts.params);
@@ -50,7 +50,7 @@ export function buildRowSummaryQuery(query: SemanticQuery): BuiltQuery {
 
   if (query.domain !== "bank") throw new Error("Bank row summary is only supported for bank queries");
   const parts = buildWhere(query);
-  return runUnsafe(`SELECT COUNT(*) AS total_count, SUM(COALESCE(credit, 0)) AS total_credit, SUM(COALESCE(debit, 0)) AS total_debit, SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement FROM bank_transactions${whereSql(parts.where)}`, parts.params);
+  return runUnsafe(`SELECT COUNT(*) AS total_count, COALESCE(SUM(ROUND(COALESCE(credit, 0)*100)),0)/100 AS total_credit, COALESCE(SUM(ROUND(COALESCE(debit, 0)*100)),0)/100 AS total_debit, COALESCE(SUM(ROUND(COALESCE(credit, 0)*100)),0)/100 - COALESCE(SUM(ROUND(COALESCE(debit, 0)*100)),0)/100 AS net_movement FROM ${semanticModel.bank.table}${whereSql(parts.where)}`, parts.params);
 }
 
 function buildWhere(query: SemanticQuery): SqlParts {
@@ -81,8 +81,13 @@ function buildWhere(query: SemanticQuery): SqlParts {
   }
 
   if (query.domain === "acuity") {
-    const clientWhere = buildAcuityClientWhere(query.filters?.searchText, params);
-    if (clientWhere) where.push(clientWhere);
+    if (query.filters?.customerKey) {
+      params.push(query.filters.customerKey);
+      where.push(`${CUSTOMER_IDENTITY_SQL}=$${params.length}`);
+    } else {
+      const clientWhere = buildAcuityClientWhere(query.filters?.searchText, params);
+      if (clientWhere) where.push(clientWhere);
+    }
   }
   return { where, params };
 }

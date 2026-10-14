@@ -24,7 +24,7 @@ export function wrapPdfText(text:string,font:Pick<PDFFont,'widthOfTextAtSize'>,s
   return lines;
 }
 export function recordUrl(href:string,origin:string) {
-  if(!/^\/(acuity\/appointments\/\d+|bank-statements\?|reconciliation\/unsettled\?)/.test(href)) return null;
+  if(!/^\/(acuity\/appointments\/\d+|bank-statements\?|customer-analytics\?|reconciliation\/unsettled\?)/.test(href)) return null;
   const base=new URL(origin);
   if(!['http:','https:'].includes(base.protocol)) return null;
   const url=new URL(href,base.origin);

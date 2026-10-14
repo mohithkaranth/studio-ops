@@ -1,3 +1,5 @@
+import {loadTs} from './ts-loader.mjs';
+import {fixtureSql} from './sql-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
@@ -11,6 +13,7 @@ await db.exec(`CREATE TABLE acuity_appointments (
   client_email text, client_phone text, appointment_datetime timestamptz, canceled boolean
 )`);
 let rows;
+const sql = fixtureSql(db, result => {rows=result;});
 const controls = () => null;
 const jsx = (type, props) => ({type, props});
 const pageModule = {exports: {}};
@@ -22,12 +25,7 @@ new Function('require', 'module', 'exports', compiled)(id => {
   if (id === '@/lib/studio-auth-request') return {requireStudioSession: async () => {}};
   if (id === './CustomerAnalyticsControls') return {default: controls};
   if (id === 'react/jsx-runtime') return {jsx, jsxs: jsx};
-  if (id === '@/lib/db') return {sql: async (strings, ...values) => {
-    let query = strings[0];
-    values.forEach((_, i) => {query += `$${i + 1}${strings[i + 1]}`;});
-    rows = (await db.query(query, values)).rows;
-    return rows;
-  }};
+  if (id === '@/lib/customer-analytics') return loadTs('lib/customer-analytics.ts',{'@/lib/db':{sql}});
   return require(id);
 }, pageModule, pageModule.exports);
 
