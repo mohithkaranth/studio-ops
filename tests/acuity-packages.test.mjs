@@ -29,5 +29,22 @@ try {
   fail=true;await assert.rejects(()=>packages.syncAcuityPackages(),/401/);
   assert.equal((await packages.findAcuityPackages(null)).certificates[0].raw_json.remainingMinutes,450);
   fail=false;api.orders.push({...api.orders[0]});await assert.rejects(()=>packages.syncAcuityPackages(),/duplicate/);
+  const {studioTools,runStudioTool}=loadTs('app/api/studio-chat/studio-tools.ts',{'server-only':{},'@/lib/db':{sql}});
+  assert.ok(studioTools.some(tool=>tool.name==='find_acuity_packages'));
+  const evidence=await runStudioTool('find_acuity_packages',{search:'Chris Chua'});
+  assert.equal(evidence.data.orderCount,1);assert.equal(evidence.sources[0].href,'/acuity-sync');
+  let modelCalls=0;
+  process.env.OPENAI_API_KEY='synthetic-test';
+  globalThis.fetch=async (_url,options)=>{
+    const body=JSON.parse(options.body);modelCalls++;
+    assert.ok(body.instructions.includes('For package, gift or subscription questions use find_acuity_packages immediately'));
+    if(modelCalls===1)return Response.json({status:'completed',output:[{type:'function_call',name:'find_acuity_packages',arguments:'{"search":"Chris Chua"}',call_id:'synthetic'}]});
+    const result=JSON.parse(body.input.find(row=>row.type==='function_call_output').output);
+    assert.equal(result.orderCount,1);assert.equal(result.certificates[0].raw_json.remainingMinutes,450);
+    return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Chris has 450 package minutes remaining as of the saved sync.'}]}]});
+  };
+  const {answerStudioQuestion}=loadTs('app/api/studio-chat/agent.ts',{'server-only':{},'@/lib/db':{sql}});
+  const answer=await answerStudioQuestion('What package balance does Chris Chua have?',[]);
+  assert.equal(modelCalls,2);assert.ok(answer.answer.includes('450'));assert.equal(answer.sources[0].href,'/acuity-sync');
   console.log('Package sync: repeat imports, balance updates, purchaser/usage distinction, search and failed-import preservation passed.');
 } finally {globalThis.fetch=originalFetch;await db.close();}
