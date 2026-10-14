@@ -14,7 +14,7 @@ test('validated client and general reports finish without per-row investigation 
   const fetchBefore=globalThis.fetch,keyBefore=process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY='test-only';
   try {
-    for(const name of ['get_client_booking_report','query_studio_report']) {
+    for(const name of ['find_customer_contacts','get_customer_analytics','get_client_booking_report','query_studio_report']) {
       let modelCalls=0,toolCalls=0;
       globalThis.fetch=async()=>{modelCalls++;return Response.json({status:'completed',output:[{type:'function_call',name,call_id:'report',arguments:'{}'}]});};
       const {answerStudioQuestion}=loadTs('app/api/studio-chat/agent.ts',{'./studio-tools':{studioTools:[],runStudioTool:async()=>{toolCalls++;return {data:{report:{answer:'January to September 2026',table}},sources:[]};}}});

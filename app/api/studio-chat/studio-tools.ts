@@ -1,3 +1,6 @@
+import {CUSTOMER_IDENTITY_SQL} from '@/lib/customer-identity';
+import {getCustomerAnalytics} from '@/lib/customer-analytics';
+import {findCustomerContacts} from '@/lib/customer-contacts';
 import { sql } from '@/lib/db';
 import { bankTransactionKey, ensureBankAllocationTables } from '@/lib/bank-allocations';
 import { ignoredBankCredit } from '@/lib/bank-credit-exclusions';
@@ -21,6 +24,8 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return { type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 export const studioTools = [
+  tool('find_customer_contacts', 'Find all matching contact details from saved Acuity customer records AND booking contacts in one read-only lookup. Use immediately for phone/contact questions; never ask the user to pick one profile before showing matching contacts. Handles 8-digit Singapore phones and +65 formats, and exact emails within comma-separated email fields. source=customers reads acuity_clients directly (including saved normalized phone values), bookings reads booking contacts, both checks both. Returns distinct phone values over ALL matches and up to 100 distinct contact rows with their source; do not substitute a secondary email belonging to another person. For all/all of them, show every matching contact separately without another confirmation.', {search:{type:'string'},source:{type:'string',enum:['customers','bookings','both']}}),
+  tool('get_customer_analytics', 'Run the SAME lost-customer calculation as the Customer Analytics page. Analysis months determine regularity; inactivity is checked over the last selected number of months from today using session dates. Defaults: analysis ending 3 complete months before current month, 12-month analysis, average 2/month, minimum 10 lifetime bookings, inactive 3 months. Use for lost/inactive/lapsed customers and preserve explicitly requested thresholds. Exact totals; table displays up to 100 customers.', {fromMonth:nullableString,toMonth:nullableString,averageBookings:{type:['number','null']},inactiveMonths:{type:['integer','null'],enum:[3,6,9,12,null]},minimumLifetimeBookings:{type:['integer','null']}}),
   tool('get_client_booking_report', 'Return a finished top-client table with exact booking counts, booking-type counts and total Acuity cost in ONE lookup. Use for top clients/customers, client booking reports, and follow-ups adding revenue/types/table to that report. Rank by booking_count unless the user specifically requests highest Acuity value. Preserve the prior range, ranking and limit on follow-ups. Cost is Acuity booking value, not confirmed bank receipts or invoice extras. Dates are Singapore session dates unless dateBasis is created_datetime. Do not fetch each client separately.', {startDate:nullableString,endDateExclusive:nullableString,limit:{type:'integer',minimum:1,maximum:100},rankBy:{type:'string',enum:['booking_count','acuity_cost']},dateBasis:{type:'string',enum:['appointment_datetime','created_datetime']}}),
   tool('get_bank_cash_movement', 'Prepare an exact bank cash-movement summary: credits, debits, net movement and counts calculated by the app. Use this for money-in versus money-out or cash-movement reports instead of doing arithmetic yourself. Returns ready-to-use report text and evidence from both directions. It is not a balance sheet or profit statement.', {startDate:nullableString,endDateExclusive:nullableString}),
   tool('get_customer_profile', 'Find a stored customer profile by name, email or phone. Returns available contact details, full-history counts and Acuity value, plus saved notes/form answers from up to 30 latest bookings. If several people match, ask for clarification and do not merge their details. Missing notes/forms mean not stored. This uses stored database records and does not fetch invoices.', {search:{type:'string'}}),
@@ -31,7 +36,7 @@ export const studioTools = [
     searchTerms: { type: 'array', items: { type: 'string' }, maxItems: 8 }, startDate: nullableString, endDateExclusive: nullableString,
   }),
   tool('find_acuity_bookings', 'Find a client’s non-cancelled Acuity bookings and sum their actual Acuity prices. Date range is Singapore session dates. Returns count, total and up to 100 bookings with links, creation dates and package codes. Acuity paid flags alone are not proof of bank settlement.', {
-    client: nullableString, startDate: nullableString, endDateExclusive: nullableString,
+    client: nullableString, startDate: nullableString, endDateExclusive: nullableString, allMatches:{type:'boolean',description:'True when the user says all/all of them or asks to inspect all matching records. Different customer emails remain visible on individual booking rows.'},
   }),
   tool('get_booking_details', 'Check one booking’s current Acuity price, priceSold, amountPaid, paid flag, certificate and add-ons directly from Acuity. Use to verify saved prices. Invoice extras are not included unless returned by Acuity.', { appointmentId: { type: 'string' } }),
   tool('get_reconciliation_results', 'Read saved yearly reconciliation including unsettled bookings, their PayNow candidates and yearly unaccounted totals. Never starts payment checks. Reports missing/stale months. Client filter narrows bookings but yearly PayNow total always remains a whole-year pooled comparison, not assigned to that client.', {
@@ -57,6 +62,30 @@ function pattern(value: string) {
 }
 
 export async function runStudioTool(name: string, args: Args): Promise<ToolResult> {
+  if(name==='find_customer_contacts') {
+    if(typeof args.search!=='string'||!['customers','bookings','both'].includes(String(args.source))) throw new Error('Choose a customer search and contact source.');
+    const result=await findCustomerContacts(args.search,args.source as 'customers'|'bookings'|'both');
+    const table:ReportTable={columns:[{key:'name',label:'Name',format:'text'},{key:'email',label:'Email(s) on record',format:'text'},{key:'phone',label:'Saved phone',format:'text'},{key:'normalized',label:'Phone with country code',format:'text'},{key:'source',label:'Source',format:'text'}],rows:result.contacts.map(row=>({name:row.name,email:row.email,phone:row.phone,normalized:row.normalized_phone?'+'+row.normalized_phone:null,source:row.source}))};
+    return {data:{...result,report:{answer:`Customer contact lookup: ${args.search}\nChecked ${result.customer_records} matching customer records and ${result.booking_records} matching booking contacts. Showing ${result.contacts.length} of ${result.contact_count} distinct contact records.\n\n${result.phones.length?`Distinct phones found: ${result.phones.map(phone=>'+'+phone).join(', ')}.`:'No phone number was found in these saved matching records.'}\n${result.saved_customer_phones.length?`Phones present in customer records: ${result.saved_customer_phones.map(phone=>'+'+phone).join(', ')}.`:''}\n\nDifferent contact records are shown separately; shared names or secondary emails do not establish that they are the same person.`,table}},sources:result.contacts.filter(row=>row.source==='Booking contact').slice(0,20).map(row=>({label:`${row.name} · contact on booking ${row.id}`,href:`/acuity/appointments/${row.id}`}))};
+  }
+  if (name === 'get_customer_analytics') {
+    const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Singapore',year:'numeric',month:'2-digit'}).formatToParts(new Date());
+    const current = new Date(Date.UTC(Number(parts.find(p=>p.type==='year')!.value),Number(parts.find(p=>p.type==='month')!.value)-1,1));
+    const month = (offset:number) => new Date(Date.UTC(current.getUTCFullYear(),current.getUTCMonth()+offset,1)).toISOString().slice(0,7);
+    const fromMonth = args.fromMonth === null ? month(-15) : String(args.fromMonth);
+    const toMonth = args.toMonth === null ? month(-4) : String(args.toMonth);
+    const averageBookings = args.averageBookings === null ? 2 : Number(args.averageBookings);
+    const inactiveMonths = args.inactiveMonths === null ? 3 : Number(args.inactiveMonths);
+    const minimumLifetimeBookings = args.minimumLifetimeBookings === null ? 10 : Number(args.minimumLifetimeBookings);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(fromMonth) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(toMonth) || fromMonth>toMonth || toMonth>month(-4)) throw new Error('Choose valid analysis months ending at least 3 complete months before the current month.');
+    if (!Number.isFinite(averageBookings)||averageBookings<1||![3,6,9,12].includes(inactiveMonths)||!Number.isInteger(minimumLifetimeBookings)||minimumLifetimeBookings<1) throw new Error('Use a minimum average of at least 1, inactivity of 3/6/9/12 months and a positive whole-number minimum lifetime count.');
+    const results = await getCustomerAnalytics({fromMonth,toMonth,averageBookings,inactiveMonths,minimumLifetimeBookings});
+    const summary = results[0];
+    const customers = results.filter(row=>row.customer_key).slice(0,100);
+    const table:ReportTable={columns:[{key:'client',label:'Client name',format:'text'},{key:'email',label:'Email',format:'text'},{key:'phone',label:'Phone',format:'text'},{key:'last',label:'Last session',format:'text'},{key:'bookings',label:'Lifetime bookings',format:'number'},{key:'average',label:'Average bookings / month',format:'number'},{key:'inactive',label:'Months inactive',format:'number'}],rows:customers.map(row=>({client:row.client,email:row.email,phone:row.phone,last:row.last_booking,bookings:row.total_bookings,average:Number(row.average_bookings_per_month),inactive:row.months_inactive}))};
+    const href=`/customer-analytics?analysed=1&${new URLSearchParams({fromMonth,toMonth,averageBookings:String(averageBookings),inactiveMonths:String(inactiveMonths),minimumLifetimeBookings:String(minimumLifetimeBookings)})}`;
+    return {data:{report:{answer:`Lost customers: ${summary?.lost_customers??0}. Showing ${customers.length} of ${summary?.lost_customers??0}.\nRegular customers: ${summary?.regular_customers??0}; customers analysed: ${summary?.customers_analysed??0}.\nAnalysis: ${fromMonth} to ${toMonth}; minimum average ${averageBookings}/month; minimum lifetime bookings ${minimumLifetimeBookings}; no sessions in the last ${inactiveMonths} months.\n\nSame calculation as Customer Analytics, using saved non-cancelled session records. The monthly average divides bookings by every month in the selected analysis period. Results identify inactivity, not why someone stopped visiting.`,table}},sources:[{label:'View the same Customer Analytics results',href}]};
+  }
   if(name==='get_client_booking_report') {
     const {start,end}=range(args);
     const limit=Number(args.limit);
@@ -68,9 +97,7 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     const clients=await sql<ClientRow[]>`
       with bookings as (
         select a.acuity_appointment_id::text as id,
-          coalesce('email:'||nullif(lower(trim(a.client_email)),''),'client:'||a.client_id::text,
-            'phone:'||nullif(regexp_replace(coalesce(a.client_phone,''),'[^0-9]','','g'),'')||':'||lower(trim(concat_ws(' ',a.client_first_name,a.client_last_name))),
-            'name:'||nullif(lower(trim(concat_ws(' ',a.client_first_name,a.client_last_name))),''),'booking:'||a.acuity_appointment_id::text) as identity,
+          ${sql.unsafe(CUSTOMER_IDENTITY_SQL)} as identity,
           coalesce(nullif(trim(concat_ws(' ',a.client_first_name,a.client_last_name)),''),nullif(trim(a.client_email),''),'Unknown customer') as client,
           coalesce(nullif(a.appointment_type_name,''),'Unknown booking type') as type,round(a.price*100) as cents,a.appointment_datetime
         from acuity_appointments a where coalesce(a.canceled,false)=false
@@ -143,18 +170,23 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
   }
   if (name === 'find_acuity_bookings') {
     const { start, end } = range(args);
-    const search = typeof args.client === 'string' && args.client.trim() ? pattern(args.client) : null;
+    const profile = typeof args.client === 'string' && args.client.trim() ? await getCustomerProfile(args.client) : null;
+    if (profile && !profile.found && !(args.allMatches===true && profile.needsClarification)) return {data:profile,sources:[]};
+    const identity = profile?.customer?.identity ?? null;
+    const nameSearch = profile?.needsClarification && args.allMatches===true ? pattern(String(args.client)) : null;
     const result = await sql<{ count: number; totalCents: string; missingPrices: number; records: Record<string, unknown>[] }[]>`
       with bookings as (select acuity_appointment_id::text as id, concat_ws(' ',client_first_name,client_last_name) as client,
         client_email, appointment_datetime, created_datetime, appointment_type_name, calendar_name, price, paid_status, certificate_code
         from acuity_appointments where coalesce(canceled,false)=false
           and (${start}::date is null or appointment_datetime >= (${start}::date::timestamp at time zone 'Asia/Singapore'))
           and (${end}::date is null or appointment_datetime < (${end}::date::timestamp at time zone 'Asia/Singapore'))
-          and (${search}::text is null or concat_ws(' ',client_first_name,client_last_name,client_email) ilike ${search}))
+          and (${identity}::text is null or ${sql.unsafe(CUSTOMER_IDENTITY_SQL)}=${identity})
+          and (${nameSearch}::text is null or ${sql.unsafe(CUSTOMER_IDENTITY_SQL)} in (select ${sql.unsafe(CUSTOMER_IDENTITY_SQL)} from acuity_appointments where concat_ws(' ',client_first_name,client_last_name,client_email) ilike ${nameSearch})))
+
       select count(*)::int as count, coalesce(sum(round(price*100)),0)::text as "totalCents", count(*) filter(where price is null)::int as "missingPrices",
         coalesce((select jsonb_agg(r) from (select * from bookings order by appointment_datetime,id limit 100) r),'[]'::jsonb) as records from bookings`;
     const data = result[0];
-    return { data: {...data,totalCents:Number(data.totalCents),records:data.records.map(row=>({...row,href:`/acuity/appointments/${row.id}`}))},sources:data.records.map(row=>({label:`${row.client} · ${String(row.appointment_datetime).slice(0,10)} · ${row.appointment_type_name}`,href:`/acuity/appointments/${row.id}`})) };
+    return { data: {...data,scope:nameSearch?'All matching customer records; individual booking emails identify each record':'Resolved customer',totalCents:Number(data.totalCents),records:data.records.map(row=>({...row,href:`/acuity/appointments/${row.id}`}))},sources:data.records.map(row=>({label:`${row.client} · ${String(row.appointment_datetime).slice(0,10)} · ${row.appointment_type_name}`,href:`/acuity/appointments/${row.id}`})) };
   }
   if (name === 'get_booking_details') {
     const id = String(args.appointmentId);
@@ -203,11 +235,17 @@ export async function runStudioTool(name: string, args: Args): Promise<ToolResul
     const raw = await extractSemanticQuery(args.question);
     const validated = validateAndNormalizeSemanticQuery(raw,args.question,parseDateMention(args.question));
     if (validated.type==='clarification') return {data:validated,sources:[]};
+    const scopedQueries=isComparisonQuery(validated.query)?validated.query.queries:[validated.query];
+    for (const query of scopedQueries) if (query.domain==='acuity' && query.filters?.searchText) {
+      const profile=await getCustomerProfile(query.filters.searchText);
+      if (profile.needsClarification) return {data:{type:'clarification',question:'Several customers match that name. Which email or phone should I use?',matches:profile.matches},sources:[]};
+      if (profile.found && profile.customer) query.filters.customerKey=profile.customer.identity;
+    }
     const result = await executeSemanticQuery(validated.query);
     const rendered=renderAnswer(validated.query,result);
     const table=studioReportTable(rendered.columns,rendered.rows);
     const queries=isComparisonQuery(validated.query)?validated.query.queries:[validated.query];
-    const scopes=queries.map(query=>`${query.domain==='acuity'?'Acuity booking value is not confirmed bank receipts.':'Raw bank movements include transfers and items ignored for reconciliation.'} ${query.dateRange?`Period: ${query.dateRange.startDate} to ${new Date(Date.parse(query.dateRange.endDateExclusive)-86400000).toISOString().slice(0,10)}.`:'Coverage: all stored records.'}`);
+    const scopes=queries.map(query=>`${query.domain==='acuity'?'Acuity booking value is not confirmed bank receipts. Unavailable costs indicate missing saved prices; complete totals cannot be established.':'Raw bank movements include transfers and items ignored for reconciliation.'} ${query.dateRange?`Period: ${query.dateRange.startDate} to ${new Date(Date.parse(query.dateRange.endDateExclusive)-86400000).toISOString().slice(0,10)}.`:'Coverage: all stored records.'}`);
     return {data:{report:{answer:[rendered.answer,...new Set(scopes)].join('\n\n'),table}},sources:[]};
   }
   throw new Error('Unknown studio tool.');
