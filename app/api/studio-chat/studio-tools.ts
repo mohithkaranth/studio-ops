@@ -1,5 +1,6 @@
 import {CUSTOMER_IDENTITY_SQL} from '@/lib/customer-identity';
 import {findAcuityPackages} from '@/lib/acuity/packages';
+import {lookupStripePayment} from '@/lib/stripe/payment-lookup';
 import {getCustomerAnalytics} from '@/lib/customer-analytics';
 import {findCustomerContacts} from '@/lib/customer-contacts';
 import { sql } from '@/lib/db';
@@ -25,6 +26,7 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return { type: 'function', name, description, strict: true, parameters: { type: 'object', properties, required: Object.keys(properties), additionalProperties: false } };
 }
 export const studioTools = [
+  tool('get_stripe_payment', 'Retrieve an exact payment directly from the connected Stripe account using a pi_, ch_ or py_ ID or Stripe dashboard payment URL. Use FIRST for exact Stripe payment questions and follow-ups about status, amount, date, card/payment method or refunds. Independent of saved reconciliation coverage. No bank search or reconciliation refresh is needed. Returns only selected payment fields, never client secrets. Not found means absent from the connected account/mode, not absent everywhere. Does not allocate a payment to a booking or package.', {reference:{type:'string'}}),
   tool('find_acuity_packages', 'Look up saved Acuity package/gift/subscription products, orders and certificate codes by customer name, email, phone, product name, order ID or code. Use immediately for package purchases, package balances/expiry and package usage; null search returns all. Includes purchaser details, order totals/status, remaining minutes/counts/value, and stored bookings redeeming the code. Buyer and session customer may differ. Payment method/processor references are unavailable; paid status is not proof of card or PayNow. Balances are snapshots as of synced_at. Do not ask confirmation to read package data.', {search:nullableString}),
   tool('find_customer_contacts', 'Find all matching contact details from saved Acuity customer records AND booking contacts in one read-only lookup. Use immediately for phone/contact questions; never ask the user to pick one profile before showing matching contacts. Handles 8-digit Singapore phones and +65 formats, and exact emails within comma-separated email fields. source=customers reads acuity_clients directly (including saved normalized phone values), bookings reads booking contacts, both checks both. Returns distinct phone values over ALL matches and up to 100 distinct contact rows with their source; do not substitute a secondary email belonging to another person. For all/all of them, show every matching contact separately without another confirmation.', {search:{type:'string'},source:{type:'string',enum:['customers','bookings','both']}}),
   tool('get_customer_analytics', 'Run the SAME lost-customer calculation as the Customer Analytics page. Analysis months determine regularity; inactivity is checked over the last selected number of months from today using session dates. Defaults: analysis ending 3 complete months before current month, 12-month analysis, average 2/month, minimum 10 lifetime bookings, inactive 3 months. Use for lost/inactive/lapsed customers and preserve explicitly requested thresholds. Exact totals; table displays up to 100 customers.', {fromMonth:nullableString,toMonth:nullableString,averageBookings:{type:['number','null']},inactiveMonths:{type:['integer','null'],enum:[3,6,9,12,null]},minimumLifetimeBookings:{type:['integer','null']}}),
@@ -64,6 +66,11 @@ function pattern(value: string) {
 }
 
 export async function runStudioTool(name: string, args: Args): Promise<ToolResult> {
+  if(name==='get_stripe_payment') {
+    if(typeof args.reference!=='string')throw new Error('Supply a Stripe payment ID or link.');
+    const data=await lookupStripePayment(args.reference);
+    return {data,sources:data.dashboardUrl?[{label:'View Stripe payment',href:data.dashboardUrl}]:[]};
+  }
   if(name==='find_acuity_packages') {
     if(args.search!==null && typeof args.search!=='string') throw new Error('Use a customer, product or code search.');
     return {data:await findAcuityPackages(args.search as string|null),sources:[{label:'Saved Acuity package data · refresh',href:'/acuity-sync'}]};
