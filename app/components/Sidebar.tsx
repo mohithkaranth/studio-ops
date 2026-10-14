@@ -5,11 +5,12 @@ import { useState } from "react";
 
 const navItems = [
   { href: "/", label: "Dashboard" },
-  { href: "/revenue", label: "Revenue Reports" },
+  { href: "/revenue", label: "Cash Flow" },
   { href: "/reports/room-utilisation", label: "Room Utilisation" },
   { href: "/customer-analytics", label: "Customer Analytics" },
   { href: "/studio-chat", label: "Studio Chat" },
   { href: "/acuity-sync", label: "Sync Acuity Data" },
+  { href: "/bank-statements/monthly", label: "Bank Statements" },
   { href: "/bank-statements", label: "Upload Bank Statements" },
   { href: "/reconciliation", label: "Reconciliation" },
   { href: "/reconciliation/unsettled", label: "↳ Unsettled" },
