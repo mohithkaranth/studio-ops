@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 type AnalyticsRow = {
+  customer_key: string | null;
   client: string | null;
   email: string | null;
   phone: string | null;
@@ -84,8 +85,14 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
       ), appointments AS (
         SELECT
           COALESCE(
-            NULLIF(TRIM(client_first_name || ' ' || client_last_name), ''),
-            client_email,
+            'email:' || NULLIF(LOWER(TRIM(client_email)), ''),
+            'phone:' || NULLIF(REGEXP_REPLACE(client_phone, '[^0-9]', '', 'g'), ''),
+            'appointment:' || acuity_appointment_id::text
+          ) AS customer_key,
+          COALESCE(
+            NULLIF(TRIM(CONCAT_WS(' ', client_first_name, client_last_name)), ''),
+            NULLIF(TRIM(client_email), ''),
+            NULLIF(TRIM(client_phone), ''),
             'Unknown'
           ) AS client,
           client_email,
@@ -96,7 +103,8 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           AND COALESCE(canceled, false) IS FALSE
       ), customer_activity AS (
         SELECT
-          a.client,
+          a.customer_key,
+          (ARRAY_AGG(a.client ORDER BY a.appointment_datetime DESC))[1] AS client,
           (ARRAY_AGG(NULLIF(TRIM(a.client_email), '') ORDER BY a.appointment_datetime DESC)
             FILTER (WHERE NULLIF(TRIM(a.client_email), '') IS NOT NULL))[1] AS email,
           (ARRAY_AGG(NULLIF(TRIM(a.client_phone), '') ORDER BY a.appointment_datetime DESC)
@@ -119,7 +127,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           s.minimum_lifetime
         FROM appointments a
         CROSS JOIN settings s
-        GROUP BY a.client, s.period_start, s.period_end, s.inactive_interval, s.minimum_average, s.minimum_lifetime
+        GROUP BY a.customer_key, s.period_start, s.period_end, s.inactive_interval, s.minimum_average, s.minimum_lifetime
       ), classified AS (
         SELECT *, period_bookings::numeric / period_months AS average_bookings_per_month,
           (period_bookings::numeric / period_months >= minimum_average AND total_bookings >= minimum_lifetime) AS is_regular
@@ -130,14 +138,14 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
           COUNT(*) FILTER (WHERE is_regular AND inactive_period_bookings = 0)::integer AS lost_customers
         FROM classified
       )
-      SELECT c.client, c.email, c.phone,
+      SELECT c.customer_key, c.client, c.email, c.phone,
         TO_CHAR(c.first_booking, 'YYYY-MM-DD') AS first_booking,
         TO_CHAR(c.last_booking, 'YYYY-MM-DD') AS last_booking,
         c.total_bookings, c.average_bookings_per_month, COALESCE(c.months_inactive, 0)::integer AS months_inactive,
         s.customers_analysed, s.regular_customers, s.lost_customers
       FROM summary s
       LEFT JOIN classified c ON c.is_regular AND c.inactive_period_bookings = 0
-      ORDER BY c.months_inactive DESC NULLS LAST, c.client ASC;
+      ORDER BY c.months_inactive DESC NULLS LAST, c.client ASC, c.customer_key ASC;
     `;
   }
 
@@ -152,6 +160,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
         <section className="space-y-3 text-sm leading-6 text-zinc-300">
           <p>This report helps identify customers who were once regular visitors but have stopped booking appointments.</p>
           <p>Choose an analysis period to determine what qualifies as a regular customer, then specify how long a customer must be inactive before they are considered lost. The results can be reviewed on screen and exported to Excel for follow-up.</p>
+          <p>Bookings are grouped by email address, or by phone number when email is missing. Bookings with neither are kept separate.</p>
           <p className="rounded-md border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-zinc-400"><span className="font-medium text-zinc-200">Note:</span> The selected analysis period must end at least 3 months before the current month, ensuring there is enough time to identify customers who have become inactive.</p>
         </section>
         <CustomerAnalyticsControls {...{ fromMonth, toMonth, averageBookings, inactiveMonths, minimumLifetimeBookings, maximumToMonth, validationMessage, results: exportRows }} />
@@ -159,7 +168,7 @@ export default async function CustomerAnalyticsPage({ searchParams }: { searchPa
         <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/60">
           <div className="border-b border-zinc-800 px-4 py-3"><h2 className="text-lg font-medium text-zinc-100">Lost customers</h2></div>
           <div className="overflow-x-auto"><table className="min-w-full divide-y divide-zinc-800 text-sm"><thead className="bg-zinc-950/70 text-left text-xs uppercase tracking-wide text-zinc-500"><tr>{["Client", "Email", "Phone", "First Booking", "Last Booking", "Total Bookings", "Average Bookings / Month", "Months Inactive", "Status"].map((header) => <th key={header} className="whitespace-nowrap px-4 py-3 font-medium">{header}</th>)}</tr></thead>
-            <tbody className="divide-y divide-zinc-800 text-zinc-300">{rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{analysed && !validationMessage ? "No lost customers match the selected filters." : "Choose your filters and select Analyse to view results."}</td></tr> : rows.map((row) => <tr key={row.client}><td className="px-4 py-3 text-zinc-100">{row.client}</td><td className="px-4 py-3">{row.email ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{row.phone ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.first_booking)}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.last_booking)}</td><td className="px-4 py-3">{Number(row.total_bookings).toLocaleString("en-SG")}</td><td className="px-4 py-3">{displayAverage(Number(row.average_bookings_per_month))}</td><td className="px-4 py-3">{row.months_inactive}</td><td className="px-4 py-3"><span className="rounded-full border border-red-900/80 bg-red-950/50 px-2 py-1 text-xs font-medium text-red-300">Lost</span></td></tr>)}</tbody>
+            <tbody className="divide-y divide-zinc-800 text-zinc-300">{rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-zinc-500">{analysed && !validationMessage ? "No lost customers match the selected filters." : "Choose your filters and select Analyse to view results."}</td></tr> : rows.map((row) => <tr key={row.customer_key}><td className="px-4 py-3 text-zinc-100">{row.client}</td><td className="px-4 py-3">{row.email ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{row.phone ?? "—"}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.first_booking)}</td><td className="whitespace-nowrap px-4 py-3">{formatDate(row.last_booking)}</td><td className="px-4 py-3">{Number(row.total_bookings).toLocaleString("en-SG")}</td><td className="px-4 py-3">{displayAverage(Number(row.average_bookings_per_month))}</td><td className="px-4 py-3">{row.months_inactive}</td><td className="px-4 py-3"><span className="rounded-full border border-red-900/80 bg-red-950/50 px-2 py-1 text-xs font-medium text-red-300">Lost</span></td></tr>)}</tbody>
           </table></div>
         </section>
       </div>
