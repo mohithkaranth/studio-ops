@@ -19,6 +19,14 @@ const COMPARISON_METRIC_ALIASES: Record<string, string> = {
   booking_value: "acuity_booking_value",
 };
 
+function comparisonMetricAlias(query:SemanticQuery,metric:string) {
+  if (query.domain==='bank' && metric==='transaction_count') {
+    if(query.filters?.transactionType==='credit' || query.metrics.includes('bank_credits')&&!query.metrics.includes('bank_debits')) return 'bank_credit_transaction_count';
+    if(query.filters?.transactionType==='debit' || query.metrics.includes('bank_debits')&&!query.metrics.includes('bank_credits')) return 'bank_debit_transaction_count';
+  }
+  return COMPARISON_METRIC_ALIASES[metric]??metric;
+}
+
 export async function executeSemanticQuery(query: SemanticQueryPayload): Promise<ShapedResult> {
   if (isComparisonQuery(query)) return executeComparisonQuery(query);
   if (query.resultMode === "aggregate_only") {
@@ -48,14 +56,14 @@ function mergeComparisonRows(query: ComparisonQuery, childRows: Record<string, u
     for (const sourceRow of childRows[childIndex] ?? []) {
       const key = dimensions.length ? dimensions.map((dimension) => String(sourceRow[dimension] ?? "")).join("|") : fallbackKey;
       const row = rowsByKey.get(key) ?? baseComparisonRow(dimensions, sourceRow);
-      for (const metric of child.metrics) row[COMPARISON_METRIC_ALIASES[metric] ?? metric] = sourceRow[metric] === null ? null : Number(sourceRow[metric] ?? 0);
+      for (const metric of child.metrics) row[comparisonMetricAlias(child,metric)] = sourceRow[metric] === null ? null : Number(sourceRow[metric] ?? 0);
       rowsByKey.set(key, row);
     }
   });
 
   if (!rowsByKey.size && !dimensions.length) rowsByKey.set(fallbackKey, { period: "total" });
   const rows = [...rowsByKey.values()];
-  const metricAliases = [...new Set(query.queries.flatMap((child) => child.metrics.map((metric) => COMPARISON_METRIC_ALIASES[metric] ?? metric)))];
+  const metricAliases = [...new Set(query.queries.flatMap((child) => child.metrics.map((metric) => comparisonMetricAlias(child,metric))))];
   rows.forEach((row) => metricAliases.forEach((alias) => { if (!(alias in row)) row[alias] = 0; }));
   return sortAggregateRows(rows, dimensions);
 }

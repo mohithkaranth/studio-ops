@@ -34,6 +34,9 @@ try {
   const rowsQuery={...base,resultMode:'aggregate_with_rows',rowLimit:100};
   assert.equal((await buildRowsQuery(rowsQuery)).length,4);
   assert.equal(Number((await buildRowSummaryQuery(rowsQuery))[0].net_movement),150);
+  const bankComparison=await executeSemanticQuery({kind:'comparison',queries:[{...base,metrics:['bank_credits','transaction_count']},{...base,metrics:['bank_debits','transaction_count']}],joinBy:[],resultMode:'aggregate_only'});
+  assert.equal(bankComparison.aggregateRows[0].bank_credit_transaction_count,2);
+  assert.equal(bankComparison.aggregateRows[0].bank_debit_transaction_count,2);
   console.log('PASS: direct searches, aggregate/monthly reports, row lists and summaries agree; duplicate uploads, other currencies and malformed rows are excluded; distinct accounts/debit amounts retained');
 
   let id=0;
