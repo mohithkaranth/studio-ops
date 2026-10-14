@@ -26,7 +26,7 @@ const saved={fetch:globalThis.fetch,window:globalThis.window,document:globalThis
 try {
   globalThis.fetch=async()=>new Response(new Uint8Array([1]));
   globalThis.window={location:{origin:'https://studio.example'}};
-  globalThis.document={createElement:()=>({click(){}})};
+  globalThis.document={body:{appendChild(){}},createElement:()=>({click(){},remove(){}})};
   globalThis.setTimeout=callback=>{callback();return 0};
   await controls.find(node=>node.props.children==='Download PDF').props.onClick();
   assert.equal(pdfOptions.messages.length,3);

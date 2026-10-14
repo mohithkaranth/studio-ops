@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {PGlite} from '@electric-sql/pglite';
+import {loadTs} from './ts-loader.mjs';
+import {fixtureSql} from './sql-fixture.mjs';
+const db=new PGlite();
+const sql=fixtureSql(db);
+await db.exec('create table acuity_appointments(acuity_appointment_id bigint,certificate_code text,canceled boolean,appointment_datetime timestamptz,appointment_type_name text,client_first_name text,client_last_name text)');
+await db.exec("insert into acuity_appointments values(1,'CODE-1',false,now(),'Rehearsal','Someone','Else'),(2,'CODE-1',true,now(),'Rehearsal','Someone','Else')");
+const api={products:[{id:1,name:'Ten hours',type:'minutes'}],orders:[{id:10,firstName:'Chris',lastName:'Chua',email:'chris@example.test',phone:'81234567',title:'Ten hours',total:500,status:'paid',products:[{id:1,total:500}]}],certificates:[{id:20,certificate:'CODE-1',orderID:10,productID:1,name:'Chris Chua',remainingMinutes:600,expiration:'2027-01-01'}]};
+const originalFetch=globalThis.fetch;
+let fail=false;
+globalThis.fetch=async url=>fail?new Response('{}',{status:401}):Response.json(api[new URL(url).pathname.split('/').pop()]);
+process.env.ACUITY_USER_ID='test';process.env.ACUITY_API_KEY='test';
+const packages=loadTs('lib/acuity/packages.ts',{'server-only':{},'@/lib/db':{sql}});
+try {
+  assert.equal((await packages.syncAcuityPackages()).orders,1);
+  api.certificates[0].remainingMinutes=450;
+  await packages.syncAcuityPackages();
+  assert.equal((await db.query('select count(*) from acuity_package_orders')).rows[0].count,1);
+  const result=await packages.findAcuityPackages('Chris Chua');
+  assert.equal(result.orderCount,1);assert.equal(result.paidOrderTotalCents,50000);
+  assert.equal(result.certificates[0].raw_json.remainingMinutes,450);
+  assert.equal(result.certificates[0].stored_booking_count,1);
+  assert.equal(result.certificates[0].bookings[0].client,'Someone Else');
+  assert.equal((await packages.findAcuityPackages('81234567')).certificateCount,1);
+  assert.equal((await packages.findAcuityPackages('CODE-1')).orderCount,1);
+  assert.equal((await packages.findAcuityPackages('Ten hours')).products.length,1);
+  assert.equal((await packages.findAcuityPackages('%')).orderCount,0);
+  fail=true;await assert.rejects(()=>packages.syncAcuityPackages(),/401/);
+  assert.equal((await packages.findAcuityPackages(null)).certificates[0].raw_json.remainingMinutes,450);
+  fail=false;api.orders.push({...api.orders[0]});await assert.rejects(()=>packages.syncAcuityPackages(),/duplicate/);
+  console.log('Package sync: repeat imports, balance updates, purchaser/usage distinction, search and failed-import preservation passed.');
+} finally {globalThis.fetch=originalFetch;await db.close();}
