@@ -81,7 +81,7 @@ try {
 
   await db.exec(`ALTER TABLE acuity_clients ADD COLUMN normalized_phone text;
     INSERT INTO acuity_clients VALUES (1,'Edalin','Ching','connect@example.test','+65 9771 1200','connect@example.test','{}','+6597711200'),
-      (2,'Edalin','Ching','connect@example.test, secondary@example.test','+65 8860 4718','connect@example.test, secondary@example.test','{}','+6588604718'),
+      (2,'Edalin','Ching','connect@example.test, secondary@example.test','+65 9771 1200','connect@example.test, secondary@example.test','{}','+6588604718'),
       (3,'Other','Person','secondary@example.test','+65 8000 1111','secondary@example.test','{}','+6580001111');`);
   await insert('Edalin Ching','connect@example.test, secondary@example.test','88604718','2020-03-01');
   const contact=await findCustomerContacts('Edalin','both');
