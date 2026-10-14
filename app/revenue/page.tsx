@@ -1,3 +1,4 @@
+import {BANK_REPORT_SOURCE} from '@/lib/bank-report-source';
 import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from "next/link";
 import RevenueReportsCharts, {
@@ -43,13 +44,13 @@ export default async function RevenuePage() {
     SELECT
       date_trunc('month', transaction_date)::date AS month_start,
       TO_CHAR(date_trunc('month', transaction_date), 'Mon YYYY') AS month_label,
-      SUM(COALESCE(credit, 0)) AS revenue,
-      SUM(COALESCE(debit, 0)) AS expenses,
-      SUM(COALESCE(credit, 0)) - SUM(COALESCE(debit, 0)) AS net_movement,
+      SUM(ROUND(COALESCE(credit, 0)*100))/100 AS revenue,
+      SUM(ROUND(COALESCE(debit, 0)*100))/100 AS expenses,
+      SUM(ROUND(COALESCE(credit, 0)*100))/100 - SUM(ROUND(COALESCE(debit, 0)*100))/100 AS net_movement,
       COUNT(*) AS transaction_count
-    FROM bank_transactions
-    WHERE transaction_date >= date_trunc('month', current_date) - interval '11 months'
-      AND transaction_date < date_trunc('month', current_date) + interval '1 month'
+    FROM ${sql.unsafe(BANK_REPORT_SOURCE)}
+    WHERE transaction_date >= date_trunc('month', current_timestamp AT TIME ZONE 'Asia/Singapore')::date - interval '11 months'
+      AND transaction_date < date_trunc('month', current_timestamp AT TIME ZONE 'Asia/Singapore')::date + interval '1 month'
     GROUP BY date_trunc('month', transaction_date)
     ORDER BY month_start ASC;
   `;
@@ -75,16 +76,16 @@ export default async function RevenuePage() {
       <div className="mx-auto w-full max-w-6xl space-y-8 px-6 py-10 sm:px-8 lg:px-10">
         <header className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">
-            Revenue Reports
+            Cash Flow
           </h1>
           <p className="text-sm text-zinc-400">
-            Monthly revenue, expenses, and net cash movement from uploaded bank transactions.
+            Monthly SGD bank credits, debits, and net cash movement. Transfers and other non-session payments are included; overlapping uploads are counted once.
           </p>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard title="Total revenue" value={sgdFormatter.format(totals.revenue)} />
-          <SummaryCard title="Total expenses" value={sgdFormatter.format(totals.expenses)} />
+          <SummaryCard title="Total credits" value={sgdFormatter.format(totals.revenue)} />
+          <SummaryCard title="Total debits" value={sgdFormatter.format(totals.expenses)} />
           <SummaryCard title="Net cash movement" value={sgdFormatter.format(totals.netMovement)} />
           <SummaryCard
             title="Transactions"
@@ -96,7 +97,7 @@ export default async function RevenuePage() {
           <section className="rounded-xl border border-dashed border-zinc-800 bg-zinc-900/60 px-6 py-10 text-center">
             <h2 className="text-lg font-medium text-zinc-100">No bank transactions found</h2>
             <p className="mt-2 text-sm text-zinc-400">
-              Upload bank statements to generate monthly revenue and expense reports.
+              Upload bank statements to generate monthly bank cash-flow reports.
             </p>
             <Link
               href="/bank-statements"

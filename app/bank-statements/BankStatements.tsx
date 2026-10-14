@@ -106,6 +106,7 @@ export default function BankStatementsPage() {
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Upload Bank Statements</h1>
         <p className="text-sm text-zinc-300">Upload monthly bank statement .xls files.</p>
+        <Link href="/bank-statements/monthly" className="inline-block text-sm text-zinc-100 underline underline-offset-4">View monthly bank statements</Link>
       </header>
 
       <form onSubmit={onUpload} className="rounded-xl border border-zinc-700 bg-zinc-950 p-5 shadow-sm">

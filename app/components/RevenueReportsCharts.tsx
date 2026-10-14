@@ -137,8 +137,8 @@ function RevenueVsExpenseChart({ data }: { data: RevenueReportPoint[] }) {
           />
           <Tooltip content={<CurrencyTooltip />} cursor={{ fill: "rgba(63, 63, 70, 0.22)" }} />
           <Legend wrapperStyle={{ color: "#d4d4d8", fontSize: "12px" }} />
-          <Bar dataKey="revenue" fill="#06b6d4" radius={[4, 4, 0, 0]} name="Revenue" />
-          <Bar dataKey="expenses" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Expenses" />
+          <Bar dataKey="revenue" fill="#06b6d4" radius={[4, 4, 0, 0]} name="Credits" />
+          <Bar dataKey="expenses" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Debits" />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -166,17 +166,17 @@ function ChartCard({
 export default function RevenueReportsCharts({ data }: { data: RevenueReportPoint[] }) {
   return (
     <section className="grid gap-6 xl:grid-cols-2">
-      <ChartCard title="Revenue by month" description="Monthly sum of credited bank transactions.">
-        <MonthlyBarChart data={data} dataKey="revenue" fill="#06b6d4" name="Revenue" />
+      <ChartCard title="Credits by month" description="Monthly sum of credited bank transactions.">
+        <MonthlyBarChart data={data} dataKey="revenue" fill="#06b6d4" name="Credits" />
       </ChartCard>
 
-      <ChartCard title="Expense by month" description="Monthly sum of debited bank transactions.">
-        <MonthlyBarChart data={data} dataKey="expenses" fill="#f59e0b" name="Expenses" />
+      <ChartCard title="Debits by month" description="Monthly sum of debited bank transactions.">
+        <MonthlyBarChart data={data} dataKey="expenses" fill="#f59e0b" name="Debits" />
       </ChartCard>
 
       <div className="xl:col-span-2">
         <ChartCard
-          title="Revenue vs Expense by month"
+          title="Credits vs Debits by month"
           description="Monthly credited and debited bank transaction totals side by side."
         >
           <RevenueVsExpenseChart data={data} />

@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       count(t.id)::int as transaction_count,
       coalesce(sum(t.debit), 0)::text as total_debit,
       coalesce(sum(t.credit), 0)::text as total_credit,
-      coalesce(sum(t.credit - t.debit), 0)::text as net_amount
+      coalesce(sum(coalesce(t.credit,0) - coalesce(t.debit,0)), 0)::text as net_amount
     from bank_statement_uploads u
     left join bank_transactions t on t.upload_id = u.id
     group by u.id
