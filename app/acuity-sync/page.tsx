@@ -2,6 +2,7 @@ import {requireStudioSession} from '@/lib/studio-auth-request';
 import Link from 'next/link'
 
 import AcuitySyncForm from '@/app/components/AcuitySyncForm'
+import AcuityPackageSync from '@/app/components/AcuityPackageSync'
 
 export default async function AcuitySyncPage() {
   await requireStudioSession();
@@ -16,6 +17,7 @@ export default async function AcuitySyncPage() {
       </header>
 
       <AcuitySyncForm />
+      <AcuityPackageSync />
 
       <Link href="/" className="inline-block text-sm text-zinc-300 hover:text-zinc-100">
         ← Back to Dashboard
