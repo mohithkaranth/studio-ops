@@ -1,6 +1,6 @@
 import type { SemanticQueryPayload } from "./semantic-query";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-5-mini";
+const MODEL = process.env.OPENAI_MODEL || "gpt-6.1-terra";
 
 export async function extractSemanticQuery(question: string): Promise<SemanticQueryPayload> {
   const apiKey = process.env.OPENAI_API_KEY;
