@@ -6,6 +6,60 @@ import { sql } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_REQUEST_BYTES = MAX_FILE_BYTES + 256 * 1024;
+const MAX_WORKSHEET_ROWS = 20_000;
+
+class UploadValidationError extends Error {
+  constructor(message: string, public readonly status = 400) {
+    super(message);
+  }
+}
+
+// Bound the multipart body before calling formData(), including chunked requests
+// without a trustworthy Content-Length header.
+async function readLimitedFormData(request: Request): Promise<FormData> {
+  const contentType = request.headers.get("content-type");
+  if (!contentType?.toLowerCase().startsWith("multipart/form-data;")) {
+    throw new UploadValidationError("Upload a bank statement file.");
+  }
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_REQUEST_BYTES) {
+    throw new UploadValidationError("Bank statement file is too large (10 MB maximum).", 413);
+  }
+  if (!request.body) throw new UploadValidationError("No file uploaded.");
+
+  const reader = request.body.getReader();
+  const parts: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    received += chunk.value.byteLength;
+    if (received > MAX_REQUEST_BYTES) {
+      await reader.cancel();
+      throw new UploadValidationError("Bank statement file is too large (10 MB maximum).", 413);
+    }
+    parts.push(chunk.value);
+  }
+  const bytes = Buffer.concat(parts);
+  const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return new Request(request.url, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body,
+  }).formData();
+}
+
+function recognizableSpreadsheet(buffer: Buffer): boolean {
+  // Standard XLS compound-file header, or XLSX ZIP header.
+  if (buffer.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))) return true;
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) return true;
+  // Some banks export HTML or SpreadsheetML XML with a .xls extension.
+  const beginning = buffer.subarray(0, 4096).toString("utf8").replace(/^\uFEFF/, "");
+  return /<(?:\?xml\b|!doctype\b|html\b|table\b|workbook\b)/i.test(beginning);
+}
+
 type ParsedTransaction = {
   transaction_date: string;
   value_date: string | null;
@@ -115,6 +169,7 @@ function parseWorkbook(buffer: Buffer) {
   const workbook = XLSX.read(buffer, {
     type: "buffer",
     cellDates: false,
+    sheetRows: MAX_WORKSHEET_ROWS + 1,
   });
 
   const firstSheetName = workbook.SheetNames[0];
@@ -131,6 +186,7 @@ function parseWorkbook(buffer: Buffer) {
     defval: "",
   }) as unknown[][];
 
+  if (rows.length > MAX_WORKSHEET_ROWS) throw new UploadValidationError("Statement exceeds the supported row limit.");
   const normalizedRows = rows.map((row) => row.map(cleanCell));
 
   const accountRow = normalizedRows.find((row) =>
@@ -184,11 +240,7 @@ function parseWorkbook(buffer: Buffer) {
   });
 
   if (headerRowIndex === -1) {
-    throw new Error(
-      `Transaction header row not found. First rows: ${JSON.stringify(
-        normalizedRows.slice(0, 10),
-      )}`,
-    );
+    throw new UploadValidationError("Transaction header row not found.");
   }
 
   const headerRow = normalizedRows[headerRowIndex].map((cell) =>
@@ -280,15 +332,24 @@ export async function POST(request: Request) {
   const denied=await authorizeApiRequest(request,true);if(denied)return denied;
 
   try {
-    const formData = await request.formData();
+    const formData = await readLimitedFormData(request);
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "No file uploaded." }, { status: 400 });
     }
 
+    if (!/\.(xls|xlsx)$/i.test(file.name) || file.name.length > 255 || file.size === 0) {
+      throw new UploadValidationError("Choose a valid .xls or .xlsx bank statement.");
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      throw new UploadValidationError("Bank statement file is too large (10 MB maximum).", 413);
+    }
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    if (!recognizableSpreadsheet(buffer)) {
+      throw new UploadValidationError("Unrecognised spreadsheet format.");
+    }
     const fileHash = hashText(buffer.toString("base64"));
 
     const parsed = parseWorkbook(buffer);
@@ -405,16 +466,13 @@ export async function POST(request: Request) {
       ...result,
     });
   } catch (error) {
-    console.error("Bank statement upload failed:", error);
+    console.error("Bank statement upload failed:", error instanceof Error ? error.name : "Unknown error");
 
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Bank statement upload failed.",
-      },
-      { status: 400 },
+      { error: error instanceof UploadValidationError
+        ? error.message
+        : "Bank statement could not be processed. Check the file format and contents." },
+      { status: error instanceof UploadValidationError ? error.status : 400 },
     );
   }
 }
